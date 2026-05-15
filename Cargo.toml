@@ -1,0 +1,24 @@
+[workspace]
+members = [
+    "liminal-host",
+    "liminal-sdk",
+    "examples/uni-v3-swaps/decoder",
+    "examples/uni-v3-swaps/price-enricher",
+    "examples/uni-v3-swaps/sink-postgres",
+    "examples/uni-v3-swaps/sink-kafka",
+]
+resolver = "2"
+
+[workspace.dependencies]
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+wasmtime = { version = "28", features = ["component-model", "async"] }
+wasmtime-wasi = "28"
+wit-bindgen = { version = "0.36", default-features = false, features = ["macros"] }
+alloy = { version = "0.9", features = ["full"] }
+alloy-sol-types = "0.9"
+alloy-primitives = "0.9"

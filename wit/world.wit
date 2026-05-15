@@ -1,0 +1,94 @@
+package liminal:pipeline@0.1.0;
+
+// ---------------------------------------------------------------------------
+// Shared data types
+// ---------------------------------------------------------------------------
+
+interface types {
+    /// A raw EVM log as received from the RPC.
+    record evm-log {
+        /// Contract address that emitted the log.
+        address: string,
+        /// Indexed topics; topic[0] is the event signature hash.
+        topics: list<string>,
+        /// Non-indexed ABI-encoded data.
+        data: list<u8>,
+        block-number: u64,
+        tx-hash: string,
+        log-index: u32,
+    }
+
+    /// A decoded Uniswap v3 Swap event.
+    /// Amounts are decimal strings to avoid int256 in the WIT type system.
+    record swap {
+        /// The Uniswap v3 pool address.
+        pool: string,
+        sender: string,
+        recipient: string,
+        /// int256 as decimal string (may be negative).
+        amount0: string,
+        /// int256 as decimal string (may be negative).
+        amount1: string,
+        tick: s32,
+        block-number: u64,
+        tx-hash: string,
+        log-index: u32,
+    }
+
+    /// A Swap enriched with USD price data from an external oracle.
+    record enriched-swap {
+        swap: swap,
+        token0-symbol: string,
+        token1-symbol: string,
+        token0-usd-price: f64,
+        token1-usd-price: f64,
+        /// Best-effort USD value of the swap; 0 if pricing unavailable.
+        amount-usd: f64,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Component interfaces
+// ---------------------------------------------------------------------------
+
+/// Decode a raw EVM log into a typed Swap, or return none if it isn't one.
+interface decode {
+    use types.{evm-log, swap};
+    decode-swap: func(log: evm-log) -> option<swap>;
+}
+
+/// Enrich a decoded Swap with USD price data via an external HTTP oracle.
+interface enrich {
+    use types.{swap, enriched-swap};
+    // Full capability isolation: the host grants wasi:http only to this
+    // component, and only to the configured oracle origin.
+    // TODO: import wasi:http/outgoing-handler@0.2.0 once wasi:http WIT is
+    //       bundled; for the PoC the host provisions HTTP access directly.
+    enrich-swap: func(swap: swap) -> result<enriched-swap, string>;
+}
+
+/// Write a batch of enriched swaps to a sink.
+/// Shared by both the Postgres and Kafka sink components.
+interface sink {
+    use types.{enriched-swap};
+    /// Returns the number of records written/published.
+    write-batch: func(swaps: list<enriched-swap>) -> result<u32, string>;
+}
+
+// ---------------------------------------------------------------------------
+// Worlds — one per component binary
+// ---------------------------------------------------------------------------
+
+world decoder-world {
+    export decode;
+}
+
+world enricher-world {
+    export enrich;
+}
+
+/// Both sink components implement the same world; the host wires them in
+/// parallel as sibling nodes in the pipeline DAG.
+world sink-world {
+    export sink;
+}

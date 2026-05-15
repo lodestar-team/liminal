@@ -1,0 +1,17 @@
+[package]
+name = "uni-v3-decoder"
+version = "0.1.0"
+edition = "2021"
+
+# This crate compiles to a WASIp2 component.
+# Build with: cargo build --target wasm32-wasip2 --release
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = { workspace = true }
+alloy-primitives = { workspace = true }
+alloy-sol-types = { workspace = true }
+
+[package.metadata.component]
+package = "liminal:decoder"
