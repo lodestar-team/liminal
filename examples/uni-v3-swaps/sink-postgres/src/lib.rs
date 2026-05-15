@@ -35,7 +35,7 @@ impl Guest for PostgresSink {
     fn write_batch(swaps: Vec<EnrichedSwap>) -> Result<u32, String> {
         // Connection string is injected via POSTGRES_CONFIG env var, set by
         // the host exclusively for this component instance.
-        let dsn = std::env::var("POSTGRES_CONFIG")
+        std::env::var("POSTGRES_CONFIG")
             .map_err(|_| "POSTGRES_CONFIG not set".to_string())?;
 
         // TODO: use wasi:sql or a Wasm-compatible postgres driver once one

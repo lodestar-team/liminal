@@ -14,7 +14,7 @@ serde_json = { workspace = true }
 # WASI 0.2 bindings — provides wasi::http for outbound HTTP inside the component.
 # The host grants this capability only to the enricher linker; no other component
 # in the pipeline can reach the network.
-wasi = "0.13"
+wasi = "0.14"
 
 [package.metadata.component]
 package = "liminal:price-enricher"
