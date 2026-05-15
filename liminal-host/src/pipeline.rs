@@ -63,7 +63,7 @@ impl Pipeline {
         let mut swaps = Vec::new();
         for log in logs {
             let evm_log = alloy_log_to_evm_log(log);
-            if let Some(swap) = decode.call_decode_swap(&mut *store, &evm_log)? {
+            if let Some(swap) = decode.call_decode_swap(&mut *store, &evm_log).await? {
                 swaps.push(swap);
             }
         }
@@ -78,7 +78,7 @@ impl Pipeline {
         for swap in swaps {
             // Convert from decoder's Swap type to enricher's Swap type.
             let enricher_swap = decoder_swap_to_enricher(swap);
-            match enrich.call_enrich_swap(&mut *store, &enricher_swap)? {
+            match enrich.call_enrich_swap(&mut *store, &enricher_swap).await? {
                 Ok(e)  => enriched.push(enricher_to_canonical(e)),
                 Err(e) => warn!("enrichment failed: {e}; skipping swap"),
             }
@@ -126,7 +126,7 @@ async fn call_sink(
 
     let count = sink_world
         .liminal_pipeline_sink()
-        .call_write_batch(&mut store, &sink_batch)?
+        .call_write_batch(&mut store, &sink_batch).await?
         .map_err(|e| anyhow::anyhow!("{name} sink returned error: {e}"))?;
 
     info!(sink = name, count, "wrote batch");

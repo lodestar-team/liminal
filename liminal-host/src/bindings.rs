@@ -4,6 +4,7 @@ pub mod decoder {
     wasmtime::component::bindgen!({
         path: "../wit",
         world: "decoder-world",
+        exports: { default: async },
     });
 }
 
@@ -11,6 +12,7 @@ pub mod enricher {
     wasmtime::component::bindgen!({
         path: "../wit",
         world: "enricher-world",
+        exports: { default: async },
     });
 }
 
@@ -18,6 +20,7 @@ pub mod sink {
     wasmtime::component::bindgen!({
         path: "../wit",
         world: "sink-world",
+        exports: { default: async },
     });
 }
 

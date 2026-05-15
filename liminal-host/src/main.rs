@@ -109,7 +109,7 @@ async fn main() -> Result<()> {
     let (enricher_store, enricher_bindings) = {
         let mut linker: Linker<HostState> = Linker::new(&engine);
         wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
-        wasmtime_wasi_http::p2::add_to_linker_async(&mut linker)?;
+        wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)?;
         let ctx = WasiCtxBuilder::new()
             .inherit_stderr()
             .env("ORACLE_URL", &args.oracle_url)

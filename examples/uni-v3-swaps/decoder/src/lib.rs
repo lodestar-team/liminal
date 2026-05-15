@@ -7,9 +7,9 @@ use alloy_sol_types::{sol, SolEvent};
 use exports::liminal::pipeline::decode::Guest;
 use liminal::pipeline::types::{EvmLog, Swap as WitSwap};
 
-// Rename the ABI event to avoid colliding with the WIT `Swap` type.
+// `Swap` here is the ABI event type; WIT's Swap is imported above as WitSwap.
 sol! {
-    event UniswapV3Swap(
+    event Swap(
         address indexed sender,
         address indexed recipient,
         int256  amount0,
@@ -37,7 +37,7 @@ impl Guest for Decoder {
             .collect();
 
         // validate: false — we already checked topic[0] manually above.
-        let decoded = UniswapV3Swap::decode_raw_log(&topics, &log.data).ok()?;
+        let decoded = Swap::decode_raw_log(&topics, &log.data).ok()?;
 
         Some(WitSwap {
             pool:         log.address.clone(),

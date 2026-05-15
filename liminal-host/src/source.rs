@@ -5,10 +5,13 @@ use alloy::{
     rpc::types::eth::{Filter, Log},
 };
 use futures_util::StreamExt;
+use std::any::Any;
 use tracing::debug;
 
 /// Wraps an EVM WebSocket log subscription and yields raw logs.
 pub struct EvmSource {
+    // Keep the provider alive — dropping it closes the WS task and ends the stream.
+    _provider: Box<dyn Any + Send + Sync>,
     inner: Box<dyn futures_util::Stream<Item = Log> + Unpin + Send>,
 }
 
@@ -26,7 +29,7 @@ impl EvmSource {
         let sub = provider.subscribe_logs(&filter).await?;
 
         debug!("subscribed to logs");
-        Ok(Self { inner: Box::new(sub.into_stream()) })
+        Ok(Self { _provider: Box::new(provider), inner: Box::new(sub.into_stream()) })
     }
 
     pub async fn next(&mut self) -> Option<Result<Log>> {
