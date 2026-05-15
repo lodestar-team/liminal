@@ -1,6 +1,6 @@
 # Liminal
 
-**Polyglot, capability-isolated WASIp3 component runtime for streaming indexing pipelines on The Graph.**
+**Polyglot, capability-isolated WASIp2 component runtime for streaming indexing pipelines on The Graph.**
 
 Liminal is a third lane alongside Subgraphs and Substreams — not a replacement for either.
 
@@ -27,7 +27,7 @@ Full rationale: [research.md](./research.md)
 
 ## Architecture
 
-A Liminal pipeline is a DAG of WASIp3 components connected by typed channels defined in WIT:
+A Liminal pipeline is a DAG of WASIp2 components connected by typed channels defined in WIT:
 
 ```
 source connector
@@ -46,11 +46,11 @@ Each component is a Wasm binary with a WIT interface. The host (Wasmtime) loads,
 ```
 liminal/
 ├── liminal-host/           # Wasmtime pipeline runner (binary)
-├── liminal-wit/            # Shared WIT interface definitions
+├── wit/                    # Shared WIT interface definitions
 ├── liminal-sdk/            # Rust helpers for component authors
 └── examples/
     └── uni-v3-swaps/       # PoC: Uniswap v3 swaps with USD enrichment + multi-sink
-        ├── decoder/        # Decode SwapRouter events from EVM blocks
+        ├── decoder/        # Decode Swap events from EVM logs
         ├── price-enricher/ # HTTP enrichment → USD prices via DeFiLlama
         ├── sink-postgres/  # Write enriched swaps to Postgres
         └── sink-kafka/     # Publish enriched swaps to Kafka
@@ -66,13 +66,46 @@ The equivalent today is three processes, three cursors, and a Debezium dependenc
 
 ---
 
+## Running the PoC
+
+Requires a WebSocket Ethereum RPC (Alchemy, Infura, Chainstack, etc.).
+
+```bash
+# Build the four WASIp2 components
+cargo build --target wasm32-wasip2 --release \
+  -p uni-v3-decoder -p uni-v3-price-enricher \
+  -p uni-v3-sink-postgres -p uni-v3-sink-kafka
+
+# Copy to default paths
+cp target/wasm32-wasip2/release/uni_v3_decoder.wasm          examples/uni-v3-swaps/decoder.wasm
+cp target/wasm32-wasip2/release/uni_v3_price_enricher.wasm   examples/uni-v3-swaps/price-enricher.wasm
+cp target/wasm32-wasip2/release/uni_v3_sink_postgres.wasm    examples/uni-v3-swaps/sink-postgres.wasm
+cp target/wasm32-wasip2/release/uni_v3_sink_kafka.wasm       examples/uni-v3-swaps/sink-kafka.wasm
+
+# Run — processes 3 blocks then exits
+RUST_LOG=liminal=debug cargo run --bin liminal -- \
+  --rpc wss://your-node \
+  --limit 3 \
+  --database-url postgres://... \   # optional
+  --kafka-brokers localhost:9092     # optional
+```
+
+Without `--database-url` / `--kafka-brokers` the sinks warn and skip; decoder and enricher still run.
+
+---
+
 ## Status
 
-Early development. WASIp3 (`wasi:0.3.0`) is at release-candidate quality in Wasmtime 37+; APIs may shift before final stabilisation.
+Working PoC. The `uni-v3-swaps` example pipeline runs against live Ethereum mainnet:
+decoded Uniswap v3 Swap events are enriched with USD prices via DeFiLlama and fanned out
+to Postgres and Kafka sinks.
+
+Built on Wasmtime 44 (WASIp2 / WASI 0.2.x). WASIp3 (async streams, structured concurrency)
+is tracked upstream; Liminal will migrate once it stabilises in Wasmtime.
 
 ---
 
 ## References
-- [WASIp3 / wasi.dev roadmap](https://wasi.dev)
-- [Wasmtime `wasip3-prototyping`](https://github.com/bytecodealliance/wasmtime)
+- [WASI 0.2 / wasi.dev](https://wasi.dev)
+- [Wasmtime](https://github.com/bytecodealliance/wasmtime)
 - [Component Model spec](https://github.com/WebAssembly/component-model)
