@@ -16,16 +16,16 @@ pub struct EvmSource {
 }
 
 impl EvmSource {
-    pub async fn connect(rpc_url: &str, topic0_hex: &str) -> Result<Self> {
+    pub async fn connect(rpc_url: &str, topic_hexes: &[&str]) -> Result<Self> {
         let ws = WsConnect::new(rpc_url);
         let provider = ProviderBuilder::new().connect_ws(ws).await?;
 
-        let topic0: FixedBytes<32> = topic0_hex
-            .trim_start_matches("0x")
-            .parse()
-            .expect("invalid topic0 hex");
+        let topics: Vec<FixedBytes<32>> = topic_hexes
+            .iter()
+            .map(|h| h.trim_start_matches("0x").parse().expect("invalid topic hex"))
+            .collect();
 
-        let filter = Filter::new().event_signature(topic0);
+        let filter = Filter::new().event_signature(topics);
         let sub = provider.subscribe_logs(&filter).await?;
 
         debug!("subscribed to logs");

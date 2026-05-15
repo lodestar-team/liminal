@@ -20,3 +20,5 @@ wasmtime-wasi-http = { workspace = true }
 alloy = { workspace = true }
 clap = { version = "4", features = ["derive", "env"] }
 futures-util = "0.3"
+axum = { version = "0.8", features = ["tokio"] }
+tokio-stream = { version = "0.1", features = ["sync"] }

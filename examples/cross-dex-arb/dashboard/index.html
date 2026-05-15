@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Liminal — Cross-DEX Arb Tracker</title>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e;
+    --uni: #ff007a; --bal: #a855f7;
+    --green: #3fb950; --red: #f85149; --yellow: #d29922;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; }
+  header { padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 16px; font-weight: 600; }
+  #status { font-size: 11px; padding: 3px 8px; border-radius: 12px; background: var(--surface); }
+  #status.connected    { color: var(--green); border: 1px solid var(--green); }
+  #status.disconnected { color: var(--red);   border: 1px solid var(--red);   }
+  .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--border); height: calc(100vh - 53px); }
+  .panel { background: var(--bg); overflow: hidden; display: flex; flex-direction: column; }
+  .panel-header { padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--border); font-weight: 600; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  /* Arb table */
+  #arb-table { width: 100%; border-collapse: collapse; }
+  #arb-table th { padding: 8px 12px; text-align: left; color: var(--muted); font-weight: normal; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); }
+  #arb-table td { padding: 7px 12px; border-bottom: 1px solid #1c2128; }
+  .spread-high { color: var(--green); font-weight: 600; }
+  .spread-mid  { color: var(--yellow); }
+  .spread-low  { color: var(--muted); }
+  .proto-uni { color: var(--uni); }
+  .proto-bal { color: var(--bal); }
+  /* Feed */
+  #feed { flex: 1; overflow-y: auto; }
+  .feed-row { padding: 8px 16px; border-bottom: 1px solid #1c2128; display: grid; grid-template-columns: 70px 110px 90px 1fr 70px; gap: 8px; align-items: center; }
+  .feed-row:hover { background: var(--surface); }
+  .tag { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 11px; }
+  .tag-uni { background: #ff007a22; color: var(--uni); border: 1px solid #ff007a44; }
+  .tag-bal { background: #a855f722; color: var(--bal); border: 1px solid #a855f744; }
+  .amount-usd { color: var(--muted); font-size: 11px; }
+  .scroll-panel { overflow-y: auto; flex: 1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Liminal / Cross-DEX Arb Tracker</h1>
+  <span id="status" class="disconnected">disconnected</span>
+  <span id="counter" style="color:var(--muted);font-size:11px;">0 swaps</span>
+</header>
+<div class="layout">
+  <!-- Left: price comparison -->
+  <div class="panel">
+    <div class="panel-header">Price Spread by Token Pair</div>
+    <div class="scroll-panel">
+      <table id="arb-table">
+        <thead>
+          <tr>
+            <th>Pair</th>
+            <th class="proto-uni">Uniswap v3</th>
+            <th class="proto-bal">Balancer v2</th>
+            <th>Spread</th>
+          </tr>
+        </thead>
+        <tbody id="arb-body"></tbody>
+      </table>
+    </div>
+  </div>
+  <!-- Right: live feed -->
+  <div class="panel">
+    <div class="panel-header">Live Swap Feed</div>
+    <div id="feed"></div>
+  </div>
+</div>
+
+<script>
+const MAX_FEED = 200;
+let swapCount = 0;
+
+// prices[pair][protocol] = { price, ts }
+// pair = "TOKEN_IN/TOKEN_OUT" canonical (alphabetical order)
+const prices = {};
+
+function canonicalPair(symIn, symOut) {
+  return [symIn, symOut].sort().join('/');
+}
+
+function effectivePrice(swap) {
+  // Raw amounts → human amounts using decimals.
+  const amtIn  = parseFloat(swap.amount_in)  / Math.pow(10, swap.token_in_decimals);
+  const amtOut = parseFloat(swap.amount_out) / Math.pow(10, swap.token_out_decimals);
+  if (amtIn === 0) return null;
+  // USD value per USD spent: how many USD of token_out per USD of token_in.
+  const usdIn  = amtIn  * swap.token_in_usd_price;
+  const usdOut = amtOut * swap.token_out_usd_price;
+  return { usdIn, usdOut, amtIn, amtOut };
+}
+
+function updateArbTable() {
+  const tbody = document.getElementById('arb-body');
+  const rows = [];
+  for (const [pair, protos] of Object.entries(prices)) {
+    const uni = protos['uniswap_v3'];
+    const bal = protos['balancer_v2'];
+    if (!uni && !bal) continue;
+    const uniPrice = uni ? (uni.usdOut / uni.usdIn).toFixed(5) : '—';
+    const balPrice = bal ? (bal.usdOut / bal.usdIn).toFixed(5) : '—';
+    let spread = '—', spreadClass = 'spread-low';
+    if (uni && bal) {
+      const pct = Math.abs(uni.usdOut/uni.usdIn - bal.usdOut/bal.usdIn) /
+                  Math.max(uni.usdOut/uni.usdIn, bal.usdOut/bal.usdIn) * 100;
+      spread = pct.toFixed(3) + '%';
+      spreadClass = pct > 0.5 ? 'spread-high' : pct > 0.1 ? 'spread-mid' : 'spread-low';
+    }
+    rows.push({ pair, uniPrice, balPrice, spread, spreadClass });
+  }
+  rows.sort((a, b) => {
+    const toNum = s => s === '—' ? -1 : parseFloat(s);
+    return toNum(b.spread) - toNum(a.spread);
+  });
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${r.pair}</td>
+      <td class="proto-uni">${r.uniPrice}</td>
+      <td class="proto-bal">${r.balPrice}</td>
+      <td class="${r.spreadClass}">${r.spread}</td>
+    </tr>`).join('');
+}
+
+function addFeedRow(swap, eff) {
+  const feed = document.getElementById('feed');
+  const isUni = swap.protocol === 'uniswap_v3';
+  const tag = isUni
+    ? '<span class="tag tag-uni">Uni v3</span>'
+    : '<span class="tag tag-bal">Balancer</span>';
+  const pair = `${swap.token_in_symbol}→${swap.token_out_symbol}`;
+  const usdIn  = eff ? '$' + eff.usdIn.toFixed(0) : '—';
+  const block  = '#' + swap.block_number.toString().slice(-5);
+  const rate   = eff ? (eff.usdOut/eff.usdIn).toFixed(5) : '—';
+  const row = document.createElement('div');
+  row.className = 'feed-row';
+  row.innerHTML = `${tag}<span>${pair}</span><span class="amount-usd">${usdIn}</span><span class="amount-usd">rate ${rate}</span><span class="amount-usd">${block}</span>`;
+  feed.prepend(row);
+  while (feed.children.length > MAX_FEED) feed.removeChild(feed.lastChild);
+}
+
+function onSwap(swap) {
+  swapCount++;
+  document.getElementById('counter').textContent = swapCount + ' swaps';
+
+  const eff = effectivePrice(swap);
+  const pair = canonicalPair(swap.token_in_symbol, swap.token_out_symbol);
+
+  if (eff && eff.usdIn > 0 && eff.usdOut > 0) {
+    if (!prices[pair]) prices[pair] = {};
+    prices[pair][swap.protocol] = eff;
+    updateArbTable();
+  }
+
+  addFeedRow(swap, eff);
+}
+
+// SSE connection
+function connect() {
+  const es = new EventSource('/events');
+  const status = document.getElementById('status');
+
+  es.onopen = () => {
+    status.textContent = 'live';
+    status.className = 'connected';
+  };
+  es.onmessage = e => {
+    try { onSwap(JSON.parse(e.data)); } catch {}
+  };
+  es.onerror = () => {
+    status.textContent = 'reconnecting…';
+    status.className = 'disconnected';
+    es.close();
+    setTimeout(connect, 2000);
+  };
+}
+
+connect();
+</script>
+</body>
+</html>

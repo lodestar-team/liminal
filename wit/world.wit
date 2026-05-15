@@ -92,3 +92,61 @@ world enricher-world {
 world sink-world {
     export sink;
 }
+
+// ---------------------------------------------------------------------------
+// Cross-DEX arbitrage types
+// ---------------------------------------------------------------------------
+
+interface arb-types {
+    enum protocol { uniswap-v3, balancer-v2 }
+
+    record normalized-swap {
+        protocol:     protocol,
+        pool:         string,
+        token-in:     string,
+        token-out:    string,
+        amount-in:    string,
+        amount-out:   string,
+        block-number: u64,
+        tx-hash:      string,
+        log-index:    u32,
+    }
+
+    record enriched-arb-swap {
+        swap:                normalized-swap,
+        token-in-symbol:     string,
+        token-out-symbol:    string,
+        token-in-usd-price:  f64,
+        token-out-usd-price: f64,
+        token-in-decimals:   u8,
+        token-out-decimals:  u8,
+    }
+}
+
+interface arb-decode {
+    use types.{evm-log};
+    use arb-types.{normalized-swap};
+    decode-swap: func(log: evm-log) -> option<normalized-swap>;
+}
+
+interface arb-enrich {
+    use arb-types.{normalized-swap, enriched-arb-swap};
+    enrich-swap: func(swap: normalized-swap) -> result<enriched-arb-swap, string>;
+}
+
+interface arb-sink {
+    use arb-types.{enriched-arb-swap};
+    write-batch: func(swaps: list<enriched-arb-swap>) -> result<u32, string>;
+}
+
+world arb-decoder-world {
+    export arb-decode;
+}
+
+world arb-enricher-world {
+    export arb-enrich;
+}
+
+world arb-sink-world {
+    export arb-sink;
+}

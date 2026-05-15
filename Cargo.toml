@@ -6,6 +6,9 @@ members = [
     "examples/uni-v3-swaps/price-enricher",
     "examples/uni-v3-swaps/sink-postgres",
     "examples/uni-v3-swaps/sink-kafka",
+    "examples/cross-dex-arb/decoder",
+    "examples/cross-dex-arb/enricher",
+    "examples/cross-dex-arb/sink-json",
 ]
 resolver = "2"
 
