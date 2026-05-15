@@ -1,30 +1,35 @@
 use anyhow::Result;
 use tracing::{debug, info, warn};
-use wasmtime::{
-    component::{Component, Instance, Val},
-    Engine, Store,
-};
+use wasmtime::{component::Linker, Engine, Store};
+use wasmtime::component::Component;
 use alloy::rpc::types::eth::Log;
 
-use crate::{HostState, source::EvmSource};
+use crate::{
+    bindings::{self, EvmLog, EnrichedSwap},
+    make_state,
+    source::EvmSource,
+    HostState,
+};
 
 /// The assembled pipeline: four component instances wired in a DAG.
 ///
 /// ```text
 /// EVM source
-///     └─► decoder
-///              └─► price-enricher   (HTTP → DeFiLlama; only this component)
-///                       ├─► sink-postgres
-///                       └─► sink-kafka
+///     └─► decoder          (no capabilities)
+///              └─► enricher  (wasi:http → DeFiLlama only)
+///                       ├─► sink-postgres  (env: DATABASE_URL)
+///                       └─► sink-kafka     (env: KAFKA_BROKERS)
 /// ```
+///
+/// One source connection.  One cursor.  The sinks see the same enriched
+/// batch and run concurrently — no second gRPC connection, no second cursor.
 pub struct Pipeline {
-    pub decoder: (Store<HostState>, Instance),
-    pub enricher: (Store<HostState>, Instance),
-    pub pg_sink: Component,
+    pub decoder:    (Store<HostState>, bindings::decoder::DecoderWorld),
+    pub enricher:   (Store<HostState>, bindings::enricher::EnricherWorld),
+    pub pg_sink:    Component,
     pub kafka_sink: Component,
-    pub engine: Engine,
-    pub oracle_url: String,
-    pub database_url: Option<String>,
+    pub engine:     Engine,
+    pub database_url:  Option<String>,
     pub kafka_brokers: Option<String>,
 }
 
@@ -32,25 +37,22 @@ impl Pipeline {
     pub async fn run(mut self, source: &mut EvmSource, limit: Option<u64>) -> Result<()> {
         let mut blocks_seen = 0u64;
         let mut last_block = 0u64;
-        let mut batch: Vec<alloy::rpc::types::eth::Log> = Vec::new();
+        let mut batch: Vec<Log> = Vec::new();
 
         info!("pipeline running");
 
-        while let Some(log_result) = source.next().await {
-            let log = log_result?;
+        while let Some(result) = source.next().await {
+            let log = result?;
             let block_number = log.block_number.unwrap_or(0);
 
-            // Flush the batch at block boundaries.
             if block_number != last_block && !batch.is_empty() {
                 self.process_batch(&batch).await?;
                 batch.clear();
                 blocks_seen += 1;
 
-                if let Some(lim) = limit {
-                    if blocks_seen >= lim {
-                        info!(blocks_seen, "block limit reached, stopping");
-                        break;
-                    }
+                if limit.is_some_and(|lim| blocks_seen >= lim) {
+                    info!(blocks_seen, "block limit reached, stopping");
+                    break;
                 }
             }
 
@@ -58,7 +60,6 @@ impl Pipeline {
             batch.push(log);
         }
 
-        // Flush any remaining logs.
         if !batch.is_empty() {
             self.process_batch(&batch).await?;
         }
@@ -68,23 +69,16 @@ impl Pipeline {
     }
 
     async fn process_batch(&mut self, logs: &[Log]) -> Result<()> {
-        // -----------------------------------------------------------------------
-        // Stage 1: decoder — one call per log, returns Option<swap>.
-        // -----------------------------------------------------------------------
-        let (decoder_store, decoder_instance) = &mut self.decoder;
-
-        let decode_fn = decoder_instance
-            .get_func(&mut *decoder_store, "liminal:pipeline/decode#decode-swap")
-            .expect("decoder component must export liminal:pipeline/decode#decode-swap");
+        // -------------------------------------------------------------------
+        // Stage 1: decoder — typed call, returns Option<Swap>.
+        // -------------------------------------------------------------------
+        let (store, world) = &mut self.decoder;
+        let decode = world.liminal_pipeline_decode();
 
         let mut swaps = Vec::new();
         for log in logs {
-            let evm_log = log_to_wit(log);
-            let mut results = vec![Val::Bool(false)]; // placeholder; real type from bindgen
-            decode_fn.call_async(&mut *decoder_store, &[evm_log], &mut results).await?;
-            decode_fn.post_return_async(&mut *decoder_store).await?;
-
-            if let Some(swap) = extract_swap_option(&results[0]) {
+            let evm_log = alloy_log_to_evm_log(log);
+            if let Some(swap) = decode.call_decode_swap(store, evm_log).await? {
                 swaps.push(swap);
             }
         }
@@ -92,26 +86,18 @@ impl Pipeline {
         if swaps.is_empty() {
             return Ok(());
         }
-
         debug!(count = swaps.len(), "decoded swaps");
 
-        // -----------------------------------------------------------------------
-        // Stage 2: enricher — one call per swap.
-        // -----------------------------------------------------------------------
-        let (enricher_store, enricher_instance) = &mut self.enricher;
+        // -------------------------------------------------------------------
+        // Stage 2: enricher — typed call, returns Result<EnrichedSwap, String>.
+        // -------------------------------------------------------------------
+        let (store, world) = &mut self.enricher;
+        let enrich = world.liminal_pipeline_enrich();
 
-        let enrich_fn = enricher_instance
-            .get_func(&mut *enricher_store, "liminal:pipeline/enrich#enrich-swap")
-            .expect("enricher component must export liminal:pipeline/enrich#enrich-swap");
-
-        let mut enriched = Vec::new();
+        let mut enriched: Vec<EnrichedSwap> = Vec::new();
         for swap in swaps {
-            let mut results = vec![Val::Bool(false)];
-            enrich_fn.call_async(&mut *enricher_store, &[swap], &mut results).await?;
-            enrich_fn.post_return_async(&mut *enricher_store).await?;
-
-            match extract_result(&results[0]) {
-                Ok(v) => enriched.push(v),
+            match enrich.call_enrich_swap(store, swap).await? {
+                Ok(e)  => enriched.push(e),
                 Err(e) => warn!("enrichment failed: {e}; skipping swap"),
             }
         }
@@ -119,109 +105,87 @@ impl Pipeline {
         if enriched.is_empty() {
             return Ok(());
         }
-
         debug!(count = enriched.len(), "enriched swaps");
 
-        // -----------------------------------------------------------------------
-        // Stage 3: fan-out — postgres and kafka sinks run concurrently from the
-        // same enriched batch.  One source connection, one cursor, two sinks.
-        // -----------------------------------------------------------------------
-        let pg_result = self.call_sink(&self.pg_sink.clone(), &enriched, &self.database_url.clone(), "postgres").await;
-        let kafka_result = self.call_sink(&self.kafka_sink.clone(), &enriched, &self.kafka_brokers.clone(), "kafka").await;
+        // -------------------------------------------------------------------
+        // Stage 3: fan-out — both sinks see the same batch.
+        // Sinks are re-instantiated per batch (stateless writes); the source
+        // cursor lives only in the pipeline runner, not in any sink.
+        // -------------------------------------------------------------------
+        let (pg_result, kafka_result) = tokio::join!(
+            call_sink(
+                &self.engine,
+                &self.pg_sink,
+                &enriched,
+                "POSTGRES_CONFIG",
+                self.database_url.as_deref(),
+                "postgres",
+            ),
+            call_sink(
+                &self.engine,
+                &self.kafka_sink,
+                &enriched,
+                "KAFKA_CONFIG",
+                self.kafka_brokers.as_deref(),
+                "kafka",
+            ),
+        );
 
-        if let Err(e) = pg_result { warn!("postgres sink error: {e}"); }
+        if let Err(e) = pg_result    { warn!("postgres sink error: {e}"); }
         if let Err(e) = kafka_result { warn!("kafka sink error: {e}"); }
 
         Ok(())
     }
+}
 
-    async fn call_sink(
-        &self,
-        component: &Component,
-        batch: &[Val],
-        config: &Option<String>,
-        name: &str,
-    ) -> Result<()> {
-        use wasmtime::component::Linker;
-        use wasmtime_wasi::WasiCtxBuilder;
+/// Instantiate a sink component, call `write-batch`, return the count.
+///
+/// Sinks are intentionally stateless: instantiated fresh per batch so that
+/// a sink crash cannot corrupt pipeline cursor state.  Connection config is
+/// injected as a WASI env var scoped to this instance only.
+async fn call_sink(
+    engine:     &Engine,
+    component:  &Component,
+    batch:      &[EnrichedSwap],
+    env_key:    &str,
+    env_val:    Option<&str>,
+    name:       &str,
+) -> Result<()> {
+    let mut linker: Linker<HostState> = Linker::new(engine);
+    wasmtime_wasi::add_to_linker_async(&mut linker)?;
+    // Note: no wasmtime_wasi_http here — sinks have no HTTP capability.
 
-        let mut linker: Linker<HostState> = Linker::new(&self.engine);
-        wasmtime_wasi::add_to_linker_async(&mut linker)?;
-
-        // Sink components receive their connection config via WASI env vars,
-        // scoped to this instance only — not visible to any other component.
-        let mut wasi_builder = WasiCtxBuilder::new().inherit_stderr();
-        if let Some(cfg) = config {
-            wasi_builder = wasi_builder.env(
-                &format!("{}_CONFIG", name.to_uppercase()),
-                cfg,
-            );
-        }
-
-        let state = HostState {
-            wasi: wasi_builder.build(),
-            table: Default::default(),
-        };
-        let mut store = Store::new(&self.engine, state);
-        let instance = linker.instantiate_async(&mut store, component).await?;
-
-        let write_fn = instance
-            .get_func(&mut store, "liminal:pipeline/sink#write-batch")
-            .expect("sink component must export liminal:pipeline/sink#write-batch");
-
-        let batch_val = Val::List(batch.to_vec());
-        let mut results = vec![Val::Bool(false)];
-        write_fn.call_async(&mut store, &[batch_val], &mut results).await?;
-        write_fn.post_return_async(&mut store).await?;
-
-        match extract_result(&results[0]) {
-            Ok(count) => {
-                info!(sink = name, count = ?count, "wrote batch");
-                Ok(())
-            }
-            Err(e) => Err(anyhow::anyhow!("{name} sink returned error: {e}")),
-        }
+    let mut wasi = wasmtime_wasi::WasiCtxBuilder::new().inherit_stderr();
+    if let Some(val) = env_val {
+        wasi = wasi.env(env_key, val);
     }
+    let mut store = Store::new(engine, make_state(wasi.build()));
+
+    let (sink_world, _) = bindings::sink::SinkWorld::instantiate_async(
+        &mut store, component, &linker,
+    ).await?;
+
+    let count = sink_world
+        .liminal_pipeline_sink()
+        .call_write_batch(&mut store, batch.to_vec())
+        .await?
+        .map_err(|e| anyhow::anyhow!("{name} sink returned error: {e}"))?;
+
+    info!(sink = name, count, "wrote batch");
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
-// Helpers: convert between alloy types and WIT Val representations.
-// These will be replaced by typed bindgen! bindings once we wire up the
-// full component model macro expansion.
+// Conversion: alloy Log → WIT EvmLog
 // ---------------------------------------------------------------------------
 
-fn log_to_wit(log: &Log) -> Val {
-    Val::Record(vec![
-        ("address".into(), Val::String(format!("{:?}", log.address()))),
-        (
-            "topics".into(),
-            Val::List(
-                log.topics()
-                    .iter()
-                    .map(|t| Val::String(format!("{t:?}")))
-                    .collect(),
-            ),
-        ),
-        ("data".into(), Val::List(log.data().data.iter().map(|b| Val::U8(*b)).collect())),
-        ("block-number".into(), Val::U64(log.block_number.unwrap_or(0))),
-        ("tx-hash".into(), Val::String(log.transaction_hash.map(|h| format!("{h:?}")).unwrap_or_default())),
-        ("log-index".into(), Val::U32(log.log_index.unwrap_or(0) as u32)),
-    ])
-}
-
-fn extract_swap_option(val: &Val) -> Option<Val> {
-    match val {
-        Val::Option(Some(v)) => Some(*v.clone()),
-        _ => None,
-    }
-}
-
-fn extract_result(val: &Val) -> Result<Val, String> {
-    match val {
-        Val::Result(Ok(Some(v))) => Ok(*v.clone()),
-        Val::Result(Err(Some(e))) => {
-            if let Val::String(s) = e.as_ref() { Err(s.clone()) } else { Err("unknown error".into()) }
-        }
-        _ => Err("unexpected result shape".into()),
+fn alloy_log_to_evm_log(log: &Log) -> EvmLog {
+    EvmLog {
+        address:      format!("{}", log.address()),
+        topics:       log.topics().iter().map(|t| format!("{t}")).collect(),
+        data:         log.data().data.to_vec(),
+        block_number: log.block_number.unwrap_or(0),
+        tx_hash:      log.transaction_hash.map(|h| format!("{h}")).unwrap_or_default(),
+        log_index:    log.log_index.unwrap_or(0) as u32,
     }
 }

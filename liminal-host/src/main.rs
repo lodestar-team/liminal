@@ -6,7 +6,9 @@ use wasmtime::{
     Config, Engine, Store,
 };
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
+mod bindings;
 mod pipeline;
 mod source;
 
@@ -38,11 +40,7 @@ struct Args {
     sink_kafka: String,
 
     /// DeFiLlama price oracle base URL (granted only to the enricher component)
-    #[arg(
-        long,
-        default_value = "https://coins.llama.fi",
-        env = "ORACLE_URL"
-    )]
+    #[arg(long, default_value = "https://coins.llama.fi", env = "ORACLE_URL")]
     oracle_url: String,
 
     /// Postgres connection string (granted only to the postgres-sink component)
@@ -58,19 +56,33 @@ struct Args {
     limit: Option<u64>,
 }
 
-/// Per-store WASI state; each component instance gets its own.
-struct HostState {
+// ---------------------------------------------------------------------------
+// Host state
+//
+// Every component instance owns its own Store<HostState>.  The struct
+// includes both WasiCtx (basic WASI) and WasiHttpCtx (HTTP capability).
+// Having the field doesn't grant the capability — the capability is granted
+// or withheld at the LINKER level: only the enricher's linker has
+// wasmtime_wasi_http::add_to_linker_async called on it.
+// ---------------------------------------------------------------------------
+pub struct HostState {
     wasi: WasiCtx,
+    http: WasiHttpCtx,
     table: wasmtime_wasi::ResourceTable,
 }
 
 impl WasiView for HostState {
-    fn ctx(&mut self) -> &mut WasiCtx {
-        &mut self.wasi
-    }
-    fn table(&mut self) -> &mut wasmtime_wasi::ResourceTable {
-        &mut self.table
-    }
+    fn ctx(&mut self) -> &mut WasiCtx { &mut self.wasi }
+    fn table(&mut self) -> &mut wasmtime_wasi::ResourceTable { &mut self.table }
+}
+
+impl WasiHttpView for HostState {
+    fn ctx(&mut self) -> &mut WasiHttpCtx { &mut self.http }
+    fn table(&mut self) -> &mut wasmtime_wasi::ResourceTable { &mut self.table }
+}
+
+pub fn make_state(wasi: WasiCtx) -> HostState {
+    HostState { wasi, http: WasiHttpCtx::new(), table: Default::default() }
 }
 
 #[tokio::main]
@@ -85,7 +97,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     // -----------------------------------------------------------------------
-    // Build the Wasmtime engine with component model + async support.
+    // Engine: component model + async.
     // -----------------------------------------------------------------------
     let mut config = Config::new();
     config.wasm_component_model(true);
@@ -93,67 +105,61 @@ async fn main() -> Result<()> {
     let engine = Engine::new(&config)?;
 
     // -----------------------------------------------------------------------
-    // Load the four component binaries.
+    // Load component binaries.
     // -----------------------------------------------------------------------
     info!("loading components");
-    let decoder = Component::from_file(&engine, &args.decoder)
+    let decoder_component = Component::from_file(&engine, &args.decoder)
         .with_context(|| format!("loading decoder from {}", args.decoder))?;
-    let enricher = Component::from_file(&engine, &args.enricher)
+    let enricher_component = Component::from_file(&engine, &args.enricher)
         .with_context(|| format!("loading enricher from {}", args.enricher))?;
-    let pg_sink = Component::from_file(&engine, &args.sink_postgres)
+    let pg_component = Component::from_file(&engine, &args.sink_postgres)
         .with_context(|| format!("loading postgres sink from {}", args.sink_postgres))?;
-    let kafka_sink = Component::from_file(&engine, &args.sink_kafka)
+    let kafka_component = Component::from_file(&engine, &args.sink_kafka)
         .with_context(|| format!("loading kafka sink from {}", args.sink_kafka))?;
 
     // -----------------------------------------------------------------------
-    // Build one linker per component, granting capabilities selectively:
-    //
-    //   decoder      — no capabilities beyond basic WASI I/O
-    //   enricher     — WASI + HTTP to oracle_url only
-    //   sink-postgres — WASI + TCP to database_url host only
-    //   sink-kafka    — WASI + TCP to kafka_brokers hosts only
-    //
-    // This is the capability-isolation guarantee: each component receives
-    // exactly the set of host interfaces it declared in its WIT world.
+    // Decoder — basic WASI only, no HTTP capability.
     // -----------------------------------------------------------------------
-    let (decoder_store, decoder_instance) = {
+    let (decoder_store, decoder_bindings) = {
         let mut linker: Linker<HostState> = Linker::new(&engine);
         wasmtime_wasi::add_to_linker_async(&mut linker)?;
-        let wasi = WasiCtxBuilder::new().inherit_stderr().build();
-        let state = HostState { wasi, table: Default::default() };
-        let mut store = Store::new(&engine, state);
-        let instance = linker.instantiate_async(&mut store, &decoder).await?;
-        (store, instance)
+        let mut store = Store::new(&engine, make_state(WasiCtxBuilder::new().inherit_stderr().build()));
+        let (bindings, _) = bindings::decoder::DecoderWorld::instantiate_async(
+            &mut store, &decoder_component, &linker,
+        ).await?;
+        (store, bindings)
     };
 
-    let (enricher_store, enricher_instance) = {
+    // -----------------------------------------------------------------------
+    // Enricher — WASI + HTTP.  Oracle URL injected as env var so the
+    // component can read it; the decoder and sinks never see it.
+    // -----------------------------------------------------------------------
+    let (enricher_store, enricher_bindings) = {
         let mut linker: Linker<HostState> = Linker::new(&engine);
         wasmtime_wasi::add_to_linker_async(&mut linker)?;
-        // HTTP capability: allow outbound requests to the oracle URL only.
-        wasmtime_wasi_http::add_to_linker_async(&mut linker)?;
+        wasmtime_wasi_http::add_to_linker_async(&mut linker)?; // HTTP capability: enricher only
         let wasi = WasiCtxBuilder::new()
             .inherit_stderr()
-            // Capability is scoped to this component instance; no other
-            // component in the pipeline can reach the network.
+            .env("ORACLE_URL", &args.oracle_url)
             .build();
-        let state = HostState { wasi, table: Default::default() };
-        let mut store = Store::new(&engine, state);
-        let instance = linker.instantiate_async(&mut store, &enricher).await?;
-        (store, instance)
+        let mut store = Store::new(&engine, make_state(wasi));
+        let (bindings, _) = bindings::enricher::EnricherWorld::instantiate_async(
+            &mut store, &enricher_component, &linker,
+        ).await?;
+        (store, bindings)
     };
 
     // -----------------------------------------------------------------------
-    // Assemble the pipeline and connect to the EVM source.
+    // Assemble and run the pipeline.
     // -----------------------------------------------------------------------
     let pipeline = pipeline::Pipeline {
-        decoder: (decoder_store, decoder_instance),
-        enricher: (enricher_store, enricher_instance),
-        pg_sink: pg_sink,
-        kafka_sink: kafka_sink,
+        decoder: (decoder_store, decoder_bindings),
+        enricher: (enricher_store, enricher_bindings),
+        pg_sink: pg_component,
+        kafka_sink: kafka_component,
         engine: engine.clone(),
-        oracle_url: args.oracle_url.clone(),
-        database_url: args.database_url.clone(),
-        kafka_brokers: args.kafka_brokers.clone(),
+        database_url: args.database_url,
+        kafka_brokers: args.kafka_brokers,
     };
 
     info!(rpc = %args.rpc, "connecting to EVM source");

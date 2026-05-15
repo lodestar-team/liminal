@@ -18,6 +18,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 wasmtime = { version = "28", features = ["component-model", "async"] }
 wasmtime-wasi = "28"
+wasmtime-wasi-http = "28"
 wit-bindgen = { version = "0.36", default-features = false, features = ["macros"] }
 alloy = { version = "0.9", features = ["full"] }
 alloy-sol-types = "0.9"
