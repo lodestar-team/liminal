@@ -73,8 +73,6 @@ Early development. WASIp3 (`wasi:0.3.0`) is at release-candidate quality in Wasm
 ---
 
 ## References
-
-- [GRC-007 thread](https://forum.thegraph.com) — original proposal
 - [WASIp3 / wasi.dev roadmap](https://wasi.dev)
 - [Wasmtime `wasip3-prototyping`](https://github.com/bytecodealliance/wasmtime)
 - [Component Model spec](https://github.com/WebAssembly/component-model)
