@@ -1,17 +1,15 @@
-wit_bindgen::generate!({
-    world: "arb-decoder-world",
-    path: "../../../wit",
-});
+//! Cross-DEX decoder node: raw EVM log → `NormalizedSwap`, or nothing.
+//!
+//! Handles two Swap event ABIs (Uniswap v3 and Balancer v2) that happen to
+//! share a name but differ entirely on the wire, and normalises both into one
+//! in/out shape the rest of the pipeline understands.
 
 use alloy_sol_types::SolEvent;
-use exports::liminal::pipeline::arb_decode::Guest;
-use liminal::pipeline::arb_types::{NormalizedSwap, Protocol};
-use liminal::pipeline::types::EvmLog;
+use arb_types::{NormalizedSwap, Protocol};
+use liminal_sdk::{node, EvmLog};
 
 // ---------------------------------------------------------------------------
-// ABI definitions — two Swap events with the same name but different ABIs.
-// Putting them in separate modules gives each its own keccak-derived sig hash
-// so decode_raw_log validates correctly against the real on-chain topic.
+// ABI definitions — separate modules so each Swap gets its own keccak sig hash.
 // ---------------------------------------------------------------------------
 
 mod uni {
@@ -42,16 +40,14 @@ mod bal {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Known Uniswap v3 pools — (pool_addr, token0_addr, token1_addr).
-// The event only carries amounts, not token addresses; we look them up here.
-// ---------------------------------------------------------------------------
+// Known Uniswap v3 pools — (pool, token0, token1). The event carries only
+// amounts, so we resolve token addresses from this table.
 const KNOWN_UNI_POOLS: &[(&str, &str, &str)] = &[
     // USDC/WETH 0.05%
     (
         "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640",
-        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", // USDC
-        "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", // WETH
+        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+        "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
     ),
     // USDC/WETH 0.3%
     (
@@ -62,34 +58,29 @@ const KNOWN_UNI_POOLS: &[(&str, &str, &str)] = &[
     // WBTC/WETH 0.3%
     (
         "0xcbcdf9626bc03e24f779434178a73a0b4bad62ed",
-        "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599", // WBTC
+        "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599",
         "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
     ),
     // DAI/WETH 0.3%
     (
         "0xc2e9f25be6257c210d7adf0d4cd6e3e881ba25f8",
-        "0x6b175474e89094c44da98b954eedeac495271d0f", // DAI
+        "0x6b175474e89094c44da98b954eedeac495271d0f",
         "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
     ),
 ];
 
-const UNI_SWAP_SIG:  &str = "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67";
-const BAL_SWAP_SIG:  &str = "0x2170c741c41531aec20e7c107c24eecfdd15e69c9bb0a8dd37b1840b9e0b207b";
+const UNI_SWAP_SIG: &str = "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67";
+const BAL_SWAP_SIG: &str = "0x2170c741c41531aec20e7c107c24eecfdd15e69c9bb0a8dd37b1840b9e0b207b";
 
-struct ArbDecoder;
-
-impl Guest for ArbDecoder {
-    fn decode_swap(log: EvmLog) -> Option<NormalizedSwap> {
-        let sig = log.topics.first()?;
-        if sig.as_str() == UNI_SWAP_SIG {
-            decode_uniswap_v3(&log)
-        } else if sig.as_str() == BAL_SWAP_SIG {
-            decode_balancer_v2(&log)
-        } else {
-            None
-        }
-    }
-}
+node!(|log: EvmLog| -> Result<Vec<NormalizedSwap>, String> {
+    let swap = match log.topics.first().map(String::as_str) {
+        Some(UNI_SWAP_SIG) => decode_uniswap_v3(&log),
+        Some(BAL_SWAP_SIG) => decode_balancer_v2(&log),
+        _ => None,
+    };
+    // Ok([]) = filtered (not a swap we track); Ok([swap]) = emit downstream.
+    Ok(swap.into_iter().collect())
+});
 
 fn decode_uniswap_v3(log: &EvmLog) -> Option<NormalizedSwap> {
     let pool = log.address.to_lowercase();
@@ -98,12 +89,7 @@ fn decode_uniswap_v3(log: &EvmLog) -> Option<NormalizedSwap> {
         .find(|(addr, ..)| *addr == pool.as_str())
         .map(|(_, t0, t1)| (*t0, *t1))?;
 
-    let topics: Vec<alloy_primitives::B256> = log
-        .topics
-        .iter()
-        .filter_map(|t| t.trim_start_matches("0x").parse().ok())
-        .collect();
-
+    let topics = parse_topics(log);
     let d = uni::Swap::decode_raw_log(&topics, &log.data).ok()?;
 
     // Positive amount0 → user sold token0 → token0 is "in", token1 is "out".
@@ -115,38 +101,38 @@ fn decode_uniswap_v3(log: &EvmLog) -> Option<NormalizedSwap> {
         };
 
     Some(NormalizedSwap {
-        protocol:     Protocol::UniswapV3,
-        pool:         log.address.clone(),
-        token_in:     token_in.to_string(),
-        token_out:    token_out.to_string(),
+        protocol: Protocol::UniswapV3,
+        pool: log.address.clone(),
+        token_in: token_in.to_string(),
+        token_out: token_out.to_string(),
         amount_in,
         amount_out,
         block_number: log.block_number,
-        tx_hash:      log.tx_hash.clone(),
-        log_index:    log.log_index,
+        tx_hash: log.tx_hash.clone(),
+        log_index: log.log_index,
     })
 }
 
 fn decode_balancer_v2(log: &EvmLog) -> Option<NormalizedSwap> {
-    let topics: Vec<alloy_primitives::B256> = log
-        .topics
-        .iter()
-        .filter_map(|t| t.trim_start_matches("0x").parse().ok())
-        .collect();
-
+    let topics = parse_topics(log);
     let d = bal::Swap::decode_raw_log(&topics, &log.data).ok()?;
 
     Some(NormalizedSwap {
-        protocol:     Protocol::BalancerV2,
-        pool:         format!("{}", d.poolId),
-        token_in:     d.tokenIn.to_string(),
-        token_out:    d.tokenOut.to_string(),
-        amount_in:    d.amountIn.to_string(),
-        amount_out:   d.amountOut.to_string(),
+        protocol: Protocol::BalancerV2,
+        pool: format!("{}", d.poolId),
+        token_in: d.tokenIn.to_string(),
+        token_out: d.tokenOut.to_string(),
+        amount_in: d.amountIn.to_string(),
+        amount_out: d.amountOut.to_string(),
         block_number: log.block_number,
-        tx_hash:      log.tx_hash.clone(),
-        log_index:    log.log_index,
+        tx_hash: log.tx_hash.clone(),
+        log_index: log.log_index,
     })
 }
 
-export!(ArbDecoder);
+fn parse_topics(log: &EvmLog) -> Vec<alloy_primitives::B256> {
+    log.topics
+        .iter()
+        .filter_map(|t| t.trim_start_matches("0x").parse().ok())
+        .collect()
+}

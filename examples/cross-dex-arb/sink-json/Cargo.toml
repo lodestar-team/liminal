@@ -1,6 +1,6 @@
 [package]
 name = "arb-sink-json"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [lib]
@@ -8,3 +8,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 wit-bindgen = { workspace = true }
+liminal-sdk = { path = "../../../liminal-sdk" }
+arb-types = { path = "../types" }
+serde_json = { workspace = true }

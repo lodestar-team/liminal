@@ -1,0 +1,11 @@
+[package]
+name = "arb-types"
+version = "0.2.0"
+edition = "2021"
+
+# Shared message types for the cross-dex-arb pipeline. Both host-bound (none
+# here) and component-bound; the serde derives are the wire contract that lets
+# the decoder, enricher, and sink agree without the host knowing any of it.
+
+[dependencies]
+serde = { workspace = true }

@@ -1,13 +1,12 @@
-wit_bindgen::generate!({
-    world: "decoder-world",
-    path: "../../../wit",
-});
+//! Uniswap v3 decoder node: raw EVM log → `Swap`, or nothing if it isn't one.
 
 use alloy_sol_types::{sol, SolEvent};
-use exports::liminal::pipeline::decode::Guest;
-use liminal::pipeline::types::{EvmLog, Swap as WitSwap};
+use liminal_sdk::{node, EvmLog};
+use uni_types::Swap as OutSwap;
 
-// `Swap` here is the ABI event type; WIT's Swap is imported above as WitSwap.
+const SWAP_SIG: &str = "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67";
+
+// The ABI event type. `OutSwap` (above) is our wire type.
 sol! {
     event Swap(
         address indexed sender,
@@ -20,37 +19,31 @@ sol! {
     );
 }
 
-struct Decoder;
-
-impl Guest for Decoder {
-    fn decode_swap(log: EvmLog) -> Option<WitSwap> {
-        // topic[0] must be the Uniswap v3 Swap event signature.
-        let sig = log.topics.first()?;
-        if sig != "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67" {
-            return None;
-        }
-
-        let topics: Vec<alloy_primitives::B256> = log
-            .topics
-            .iter()
-            .filter_map(|t| t.trim_start_matches("0x").parse().ok())
-            .collect();
-
-        // validate: false — we already checked topic[0] manually above.
-        let decoded = Swap::decode_raw_log(&topics, &log.data).ok()?;
-
-        Some(WitSwap {
-            pool:         log.address.clone(),
-            sender:       decoded.sender.to_string(),
-            recipient:    decoded.recipient.to_string(),
-            amount0:      decoded.amount0.to_string(),
-            amount1:      decoded.amount1.to_string(),
-            tick:         i32::try_from(decoded.tick).unwrap_or(0),
-            block_number: log.block_number,
-            tx_hash:      log.tx_hash,
-            log_index:    log.log_index,
-        })
+node!(|log: EvmLog| -> Result<Vec<OutSwap>, String> {
+    if log.topics.first().map(String::as_str) != Some(SWAP_SIG) {
+        return Ok(vec![]);
     }
-}
 
-export!(Decoder);
+    let topics: Vec<alloy_primitives::B256> = log
+        .topics
+        .iter()
+        .filter_map(|t| t.trim_start_matches("0x").parse().ok())
+        .collect();
+
+    let decoded = match Swap::decode_raw_log(&topics, &log.data) {
+        Ok(d) => d,
+        Err(e) => return Err(format!("decode_raw_log: {e}")),
+    };
+
+    Ok(vec![OutSwap {
+        pool: log.address.clone(),
+        sender: decoded.sender.to_string(),
+        recipient: decoded.recipient.to_string(),
+        amount0: decoded.amount0.to_string(),
+        amount1: decoded.amount1.to_string(),
+        tick: i32::try_from(decoded.tick).unwrap_or(0),
+        block_number: log.block_number,
+        tx_hash: log.tx_hash,
+        log_index: log.log_index,
+    }])
+});

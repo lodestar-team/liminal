@@ -1,9 +1,9 @@
 [package]
-name = "liminal-sdk"
+name = "uni-types"
 version = "0.2.0"
 edition = "2021"
 
+# Shared wire types for the uni-v3-swaps pipeline.
+
 [dependencies]
-wit-bindgen = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }

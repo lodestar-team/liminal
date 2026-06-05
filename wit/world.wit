@@ -1,152 +1,27 @@
-package liminal:pipeline@0.1.0;
+package liminal:node@0.2.0;
 
 // ---------------------------------------------------------------------------
-// Shared data types
+// The universal node interface.
+//
+// Every Liminal component — decoder, enricher, sink, or anything you dream up —
+// exports exactly this one function. The host wires components into a DAG from
+// a manifest and pipes opaque byte payloads (JSON by convention) along the
+// edges, blind to what's inside. That blindness is the whole point: a new
+// pipeline shape is a config change, never a host recompile.
 // ---------------------------------------------------------------------------
 
-interface types {
-    /// A raw EVM log as received from the RPC.
-    record evm-log {
-        /// Contract address that emitted the log.
-        address: string,
-        /// Indexed topics; topic[0] is the event signature hash.
-        topics: list<string>,
-        /// Non-indexed ABI-encoded data.
-        data: list<u8>,
-        block-number: u64,
-        tx-hash: string,
-        log-index: u32,
-    }
-
-    /// A decoded Uniswap v3 Swap event.
-    /// Amounts are decimal strings to avoid int256 in the WIT type system.
-    record swap {
-        /// The Uniswap v3 pool address.
-        pool: string,
-        sender: string,
-        recipient: string,
-        /// int256 as decimal string (may be negative).
-        amount0: string,
-        /// int256 as decimal string (may be negative).
-        amount1: string,
-        tick: s32,
-        block-number: u64,
-        tx-hash: string,
-        log-index: u32,
-    }
-
-    /// A Swap enriched with USD price data from an external oracle.
-    record enriched-swap {
-        swap: swap,
-        token0-symbol: string,
-        token1-symbol: string,
-        token0-usd-price: f64,
-        token1-usd-price: f64,
-        /// Best-effort USD value of the swap; 0 if pricing unavailable.
-        amount-usd: f64,
-    }
+interface node {
+    /// Transform one input message into zero or more output messages.
+    ///
+    /// - input   : an opaque payload (the SDK encodes/decodes JSON for you).
+    /// - ok([])  : message consumed/filtered — nothing flows downstream.
+    /// - ok([..]): one or more messages, each routed to every successor edge.
+    /// - err(s)  : a recoverable, per-message error; the host logs it and
+    ///             carries on with the next message.
+    transform: func(input: list<u8>) -> result<list<list<u8>>, string>;
 }
 
-// ---------------------------------------------------------------------------
-// Component interfaces
-// ---------------------------------------------------------------------------
-
-/// Decode a raw EVM log into a typed Swap, or return none if it isn't one.
-interface decode {
-    use types.{evm-log, swap};
-    decode-swap: func(log: evm-log) -> option<swap>;
-}
-
-/// Enrich a decoded Swap with USD price data via an external HTTP oracle.
-interface enrich {
-    use types.{swap, enriched-swap};
-    // Full capability isolation: the host grants wasi:http only to this
-    // component, and only to the configured oracle origin.
-    // TODO: import wasi:http/outgoing-handler@0.2.0 once wasi:http WIT is
-    //       bundled; for the PoC the host provisions HTTP access directly.
-    enrich-swap: func(swap: swap) -> result<enriched-swap, string>;
-}
-
-/// Write a batch of enriched swaps to a sink.
-/// Shared by both the Postgres and Kafka sink components.
-interface sink {
-    use types.{enriched-swap};
-    /// Returns the number of records written/published.
-    write-batch: func(swaps: list<enriched-swap>) -> result<u32, string>;
-}
-
-// ---------------------------------------------------------------------------
-// Worlds — one per component binary
-// ---------------------------------------------------------------------------
-
-world decoder-world {
-    export decode;
-}
-
-world enricher-world {
-    export enrich;
-}
-
-/// Both sink components implement the same world; the host wires them in
-/// parallel as sibling nodes in the pipeline DAG.
-world sink-world {
-    export sink;
-}
-
-// ---------------------------------------------------------------------------
-// Cross-DEX arbitrage types
-// ---------------------------------------------------------------------------
-
-interface arb-types {
-    enum protocol { uniswap-v3, balancer-v2 }
-
-    record normalized-swap {
-        protocol:     protocol,
-        pool:         string,
-        token-in:     string,
-        token-out:    string,
-        amount-in:    string,
-        amount-out:   string,
-        block-number: u64,
-        tx-hash:      string,
-        log-index:    u32,
-    }
-
-    record enriched-arb-swap {
-        swap:                normalized-swap,
-        token-in-symbol:     string,
-        token-out-symbol:    string,
-        token-in-usd-price:  f64,
-        token-out-usd-price: f64,
-        token-in-decimals:   u8,
-        token-out-decimals:  u8,
-    }
-}
-
-interface arb-decode {
-    use types.{evm-log};
-    use arb-types.{normalized-swap};
-    decode-swap: func(log: evm-log) -> option<normalized-swap>;
-}
-
-interface arb-enrich {
-    use arb-types.{normalized-swap, enriched-arb-swap};
-    enrich-swap: func(swap: normalized-swap) -> result<enriched-arb-swap, string>;
-}
-
-interface arb-sink {
-    use arb-types.{enriched-arb-swap};
-    write-batch: func(swaps: list<enriched-arb-swap>) -> result<u32, string>;
-}
-
-world arb-decoder-world {
-    export arb-decode;
-}
-
-world arb-enricher-world {
-    export arb-enrich;
-}
-
-world arb-sink-world {
-    export arb-sink;
+/// Every component binary implements this world. One world to rule them all.
+world liminal-node {
+    export node;
 }

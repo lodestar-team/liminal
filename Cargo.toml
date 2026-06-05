@@ -2,13 +2,24 @@
 members = [
     "liminal-host",
     "liminal-sdk",
+    "examples/uni-v3-swaps/types",
     "examples/uni-v3-swaps/decoder",
     "examples/uni-v3-swaps/price-enricher",
     "examples/uni-v3-swaps/sink-postgres",
     "examples/uni-v3-swaps/sink-kafka",
+    "examples/cross-dex-arb/types",
     "examples/cross-dex-arb/decoder",
     "examples/cross-dex-arb/enricher",
     "examples/cross-dex-arb/sink-json",
+]
+# `cargo build` (no target) builds only the natively-linkable crates. The
+# component crates are cdylibs with WIT exports that only link for wasm32-wasip2,
+# so they're built explicitly via the justfile / target flag, never by default.
+default-members = [
+    "liminal-host",
+    "liminal-sdk",
+    "examples/uni-v3-swaps/types",
+    "examples/cross-dex-arb/types",
 ]
 resolver = "2"
 

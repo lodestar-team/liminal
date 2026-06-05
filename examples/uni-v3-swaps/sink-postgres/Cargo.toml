@@ -1,14 +1,12 @@
 [package]
 name = "uni-v3-sink-postgres"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
-# Build with: cargo build --target wasm32-wasip2 --release
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
 wit-bindgen = { workspace = true }
-
-[package.metadata.component]
-package = "liminal:sink-postgres"
+liminal-sdk = { path = "../../../liminal-sdk" }
+uni-types = { path = "../types" }

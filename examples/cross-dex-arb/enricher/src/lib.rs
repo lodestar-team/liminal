@@ -1,44 +1,42 @@
-wit_bindgen::generate!({
-    world: "arb-enricher-world",
-    path: "../../../wit",
-});
+//! Enricher node: `NormalizedSwap` → `EnrichedArbSwap`, adding token symbols,
+//! USD prices, and decimals fetched live from a price oracle.
+//!
+//! This is the only node in the pipeline granted `http`. The manifest decides
+//! that; if the grant were removed, this component would fail to instantiate —
+//! capability isolation enforced by construction, not by convention.
 
-use exports::liminal::pipeline::arb_enrich::Guest;
-use liminal::pipeline::arb_types::{EnrichedArbSwap, NormalizedSwap};
+use arb_types::{EnrichedArbSwap, NormalizedSwap};
+use liminal_sdk::node;
 use wasi::http::outgoing_handler;
 use wasi::http::types::{Fields, Method, OutgoingRequest, Scheme};
 use wasi::io::poll;
 
-struct ArbEnricher;
-
-impl Guest for ArbEnricher {
-    fn enrich_swap(swap: NormalizedSwap) -> Result<EnrichedArbSwap, String> {
-        if swap.token_in.is_empty() || swap.token_out.is_empty() {
-            return Err("token addresses unknown".to_string());
-        }
-
-        let oracle_url = std::env::var("ORACLE_URL")
-            .unwrap_or_else(|_| "https://coins.llama.fi".to_string());
-
-        let (in_sym, in_price, in_dec, out_sym, out_price, out_dec) =
-            fetch_token_info(&oracle_url, &swap.token_in, &swap.token_out)
-                .unwrap_or_else(|| ("?".into(), 0.0, 18, "?".into(), 0.0, 18));
-
-        Ok(EnrichedArbSwap {
-            swap,
-            token_in_symbol:    in_sym,
-            token_out_symbol:   out_sym,
-            token_in_usd_price: in_price,
-            token_out_usd_price: out_price,
-            token_in_decimals:  in_dec,
-            token_out_decimals: out_dec,
-        })
+node!(|swap: NormalizedSwap| -> Result<Vec<EnrichedArbSwap>, String> {
+    if swap.token_in.is_empty() || swap.token_out.is_empty() {
+        return Err("token addresses unknown".to_string());
     }
-}
+
+    let oracle_url =
+        std::env::var("ORACLE_URL").unwrap_or_else(|_| "https://coins.llama.fi".to_string());
+
+    let (in_sym, in_price, in_dec, out_sym, out_price, out_dec) =
+        fetch_token_info(&oracle_url, &swap.token_in, &swap.token_out)
+            .unwrap_or_else(|| ("?".into(), 0.0, 18, "?".into(), 0.0, 18));
+
+    Ok(vec![EnrichedArbSwap {
+        swap,
+        token_in_symbol: in_sym,
+        token_out_symbol: out_sym,
+        token_in_usd_price: in_price,
+        token_out_usd_price: out_price,
+        token_in_decimals: in_dec,
+        token_out_decimals: out_dec,
+    }])
+});
 
 struct TokenInfo {
-    symbol:   String,
-    price:    f64,
+    symbol: String,
+    price: f64,
     decimals: u8,
 }
 
@@ -56,12 +54,19 @@ fn fetch_token_info(
         let key = format!("ethereum:{addr}");
         let obj = coins.get(&key);
         TokenInfo {
-            symbol:   obj.and_then(|v| v.get("symbol")).and_then(|v| v.as_str())
-                         .unwrap_or("?").to_string(),
-            price:    obj.and_then(|v| v.get("price")).and_then(|v| v.as_f64())
-                         .unwrap_or(0.0),
-            decimals: obj.and_then(|v| v.get("decimals")).and_then(|v| v.as_u64())
-                         .unwrap_or(18) as u8,
+            symbol: obj
+                .and_then(|v| v.get("symbol"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("?")
+                .to_string(),
+            price: obj
+                .and_then(|v| v.get("price"))
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0),
+            decimals: obj
+                .and_then(|v| v.get("decimals"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(18) as u8,
         }
     };
 
@@ -83,7 +88,9 @@ fn wasi_https_get(authority: &str, path_and_query: &str) -> Option<String> {
     loop {
         if let Some(result) = fut.get() {
             let resp = result.ok()?.ok()?;
-            if resp.status() != 200 { return None; }
+            if resp.status() != 200 {
+                return None;
+            }
             let body = resp.consume().ok()?;
             let stream = body.stream().ok()?;
             let mut bytes = Vec::new();
@@ -91,7 +98,7 @@ fn wasi_https_get(authority: &str, path_and_query: &str) -> Option<String> {
                 match stream.blocking_read(4096) {
                     Ok(chunk) if chunk.is_empty() => break,
                     Ok(chunk) => bytes.extend(chunk),
-                    Err(_)    => break,
+                    Err(_) => break,
                 }
             }
             return String::from_utf8(bytes).ok();
@@ -99,5 +106,3 @@ fn wasi_https_get(authority: &str, path_and_query: &str) -> Option<String> {
         poll::poll(&[&fut.subscribe()]);
     }
 }
-
-export!(ArbEnricher);

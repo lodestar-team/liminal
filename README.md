@@ -19,25 +19,106 @@ The pipelines Liminal targets exist today — they're just built by gluing four 
 - a sidecar service for whatever the sink can't do
 - a reconciliation layer because cursors now live in three places
 
-Liminal replaces that stack with a single WASIp3 component pipeline: one cursor, one process, one observable failure boundary. Capabilities (HTTP, key-value, filesystem) are granted per-component by the host, not per-pipeline — so untrusted middleware is a concrete engineering construct, not a code-review prayer.
+Liminal replaces that stack with a single WASIp2 component pipeline: one cursor, one process, one observable failure boundary. Capabilities (HTTP, key-value, filesystem) are granted per-component by the host, not per-pipeline — so untrusted middleware is a concrete engineering construct, not a code-review prayer.
 
 Full rationale: [research.md](./research.md)
 
 ---
 
-## Architecture
+## How it works
 
-A Liminal pipeline is a DAG of WASIp2 components connected by typed channels defined in WIT:
+A Liminal pipeline is a **DAG declared in a manifest**. The host is generic: it reads the
+manifest, instantiates each component into its own capability-scoped sandbox, wires the graph,
+and streams source messages through. Adding a new pipeline shape is a config change — the host
+is never recompiled.
 
 ```
-source connector
-    └─► decoder component
-            └─► enricher component   (wasi:http granted here only)
-                    ├─► sink-a component
-                    └─► sink-b component
+source ──▶ decoder ──▶ enricher ──▶ sink ──▶ (dashboard / db / queue)
+   (bytes)     (bytes)      (bytes)
 ```
 
-Each component is a Wasm binary with a WIT interface. The host (Wasmtime) loads, composes, and wires them. Capabilities are injected at composition time.
+Every component — whatever it does — exports **one** function:
+
+```wit
+// wit/world.wit
+interface node {
+    transform: func(input: list<u8>) -> result<list<list<u8>>, string>;
+}
+```
+
+The host pipes opaque bytes (JSON by convention) along the edges, blind to the payload. That
+blindness is the point: the runtime moves bytes; the components give them meaning.
+
+### The manifest
+
+```toml
+name = "cross-dex-arb"
+
+[source]
+type = "evm"
+rpc = "${ETH_RPC_URL}"          # ${VAR} and ${VAR:-default} are interpolated
+topics = ["0xc42079…", "0x2170c7…"]
+
+[[nodes]]
+id = "decoder"
+wasm = "examples/cross-dex-arb/decoder.wasm"
+# no capabilities → pure compute, cannot touch the network even if it tried
+
+[[nodes]]
+id = "enricher"
+wasm = "examples/cross-dex-arb/enricher.wasm"
+capabilities = ["http"]          # the ONLY node granted network egress
+env = { ORACLE_URL = "https://coins.llama.fi" }
+
+[[nodes]]
+id = "sink"
+wasm = "examples/cross-dex-arb/sink-json.wasm"
+capabilities = ["stdout"]
+
+[[edges]]
+from = "source"
+to = "decoder"
+[[edges]]
+from = "decoder"
+to = "enricher"
+[[edges]]
+from = "enricher"
+to = "sink"
+
+[dashboard]                      # optional: terminal-node output → live SSE
+port = 8080
+html = "examples/cross-dex-arb/dashboard/index.html"
+```
+
+### Capability isolation, enforced by construction
+
+Capabilities are **data**, granted per node. A node that imports a capability it wasn't granted
+**fails to instantiate** — loudly, at load time. This isn't a convention; it's a test:
+
+```
+test runtime::tests::http_capability_is_enforced_at_load ... ok
+```
+
+The enricher imports `wasi:http`. It loads with `capabilities = ["http"]` and is refused
+without it. The decoder and sinks have no network grant and physically cannot make an outbound
+request.
+
+### Authoring a component
+
+A component is a typed closure. The `liminal-sdk` `node!` macro handles the WIT boundary and
+JSON (de)serialisation — there is no bindgen boilerplate to write:
+
+```rust
+use liminal_sdk::{node, EvmLog};
+use arb_types::NormalizedSwap;
+
+node!(|log: EvmLog| -> Result<Vec<NormalizedSwap>, String> {
+    // Ok(vec![])      → filter this message
+    // Ok(vec![swap])  → emit downstream
+    // Err(msg)        → recoverable per-message error (host logs, carries on)
+    Ok(decode(log).into_iter().collect())
+});
+```
 
 ---
 
@@ -45,96 +126,84 @@ Each component is a Wasm binary with a WIT interface. The host (Wasmtime) loads,
 
 ```
 liminal/
-├── liminal-host/           # Wasmtime pipeline runner (binary)
-├── wit/                    # Shared WIT interface definitions
-├── liminal-sdk/            # Rust helpers for component authors
+├── liminal-host/           # Generic manifest-driven runtime (the `liminal` binary)
+│   ├── manifest.rs         #   TOML manifest: parse, ${env} interpolation, DAG validation
+│   ├── runtime.rs          #   load nodes (capability-scoped), wire DAG, stream messages
+│   ├── source.rs           #   EVM WebSocket log source → canonical EvmLog
+│   └── dashboard.rs        #   optional SSE dashboard fed by terminal-node output
+├── liminal-sdk/            # `node!` macro + shared EvmLog wire type for component authors
+├── wit/world.wit           # The one universal node interface
+├── justfile                # build / test / run recipes
 └── examples/
-    ├── uni-v3-swaps/       # Pipeline 1: Uniswap v3 swaps → USD enrichment → Postgres + Kafka
-    │   ├── decoder/
-    │   ├── price-enricher/
-    │   ├── sink-postgres/
-    │   └── sink-kafka/
-    └── cross-dex-arb/      # Pipeline 2: Uni v3 + Balancer v2 → live arb dashboard
-        ├── decoder/        # Decode both Swap event ABIs; normalise to common type
-        ├── enricher/       # USD price + decimals via DeFiLlama
-        ├── sink-json/      # JSON lines → stdout (captured by host → SSE broadcast)
-        └── dashboard/      # Vanilla-JS SSE client; spread table + live feed
+    ├── uni-v3-swaps/        # decoder → enricher → Postgres + Kafka fan-out
+    │   ├── types/           #   shared serde wire types for this pipeline
+    │   ├── {decoder,price-enricher,sink-postgres,sink-kafka}/
+    │   └── pipeline.toml
+    └── cross-dex-arb/       # Uni v3 + Balancer v2 → live arb dashboard
+        ├── types/
+        ├── {decoder,enricher,sink-json}/
+        ├── dashboard/index.html
+        └── pipeline.toml
 ```
 
 ---
 
-## Example 1: Uniswap v3 Swaps
-
-Demonstrates effectful multi-sink fan-out that a Subgraph cannot do: decode Uniswap v3 Swap
-events, enrich with live USD prices via DeFiLlama (HTTP granted only to the enricher component),
-then fan out to Postgres and Kafka concurrently — single source connection, single cursor.
+## Building
 
 ```bash
-# Build
-cargo build --target wasm32-wasip2 --release \
-  -p uni-v3-decoder -p uni-v3-price-enricher \
-  -p uni-v3-sink-postgres -p uni-v3-sink-kafka
+# host (native) — note `cargo build` alone builds only natively-linkable crates
+cargo build --release -p liminal-host
 
-cp target/wasm32-wasip2/release/uni_v3_decoder.wasm        examples/uni-v3-swaps/decoder.wasm
-cp target/wasm32-wasip2/release/uni_v3_price_enricher.wasm examples/uni-v3-swaps/price-enricher.wasm
-cp target/wasm32-wasip2/release/uni_v3_sink_postgres.wasm  examples/uni-v3-swaps/sink-postgres.wasm
-cp target/wasm32-wasip2/release/uni_v3_sink_kafka.wasm     examples/uni-v3-swaps/sink-kafka.wasm
-
-# Run (--database-url and --kafka-brokers are optional; sinks warn and skip if absent)
-cargo run --release --bin liminal -- uni-v3 \
-  --rpc wss://your-node \
-  --limit 3
+# components (wasm) + stage artifacts — or just `just build` for everything
+just build
 ```
+
+`just build` builds the host and all seven components for `wasm32-wasip2` and copies the `.wasm`
+files next to their manifests. (Plain `cargo build` deliberately skips the component crates —
+they're cdylibs with WIT exports that only link for the wasm target.)
 
 ---
 
-## Example 2: Cross-DEX Arbitrage Tracker
+## Running
 
-Demonstrates multi-protocol decoding and real-time SSE push from a single pipeline.
-Subscribes to both Uniswap v3 and Balancer v2 Swap events simultaneously, decodes and
-normalises them to a common type, enriches with USD prices, then broadcasts every swap as
-a JSON line via Server-Sent Events to a live dashboard.
-
-The dashboard shows a price-spread table (Uni v3 price vs Balancer v2 price per token pair,
-ranked by spread %) alongside a live swap feed with protocol, pair, USD size, and block.
+Both pipelines are now just manifests handed to the same generic binary:
 
 ```bash
-# Build
-cargo build --target wasm32-wasip2 --release \
-  -p arb-decoder -p arb-enricher -p arb-sink-json
+export ETH_RPC_URL=wss://your-node
 
-cp target/wasm32-wasip2/release/arb_decoder.wasm   examples/cross-dex-arb/decoder.wasm
-cp target/wasm32-wasip2/release/arb_enricher.wasm  examples/cross-dex-arb/enricher.wasm
-cp target/wasm32-wasip2/release/arb_sink_json.wasm examples/cross-dex-arb/sink-json.wasm
+# Cross-DEX arbitrage tracker → dashboard at http://localhost:8080
+just run-arb
+#   …or: cargo run --release -p liminal-host -- examples/cross-dex-arb/pipeline.toml
 
-# Run — dashboard at http://localhost:8080
-cargo run --release --bin liminal -- arb \
-  --rpc wss://your-node
-
-# Custom port
-cargo run --release --bin liminal -- arb \
-  --rpc wss://your-node \
-  --port 9090
+# Uniswap v3 swaps → Postgres + Kafka fan-out (stop after 5 messages)
+just run-uni --limit 5
+#   …or: cargo run --release -p liminal-host -- examples/uni-v3-swaps/pipeline.toml --limit 5
 ```
 
-Open `http://localhost:8080` in a browser. The left panel updates in real time as swap events
-arrive; the right panel is a live feed with protocol tag, token pair, USD value, and block number.
+`DATABASE_URL` and `KAFKA_BROKERS` are optional — the uni-v3 manifest supplies `${VAR:-default}`
+fallbacks, and the PoC sinks emit SQL / JSON to stdout rather than connecting to live services.
 
 ---
 
 ## Status
 
-Two working PoC pipelines, both running against live Ethereum mainnet.
+A **generic, manifest-driven runtime** with two pipelines expressed entirely as config, both
+running against live Ethereum mainnet.
 
-**uni-v3-swaps** — decodes Uniswap v3 Swap events, enriches with USD prices via DeFiLlama,
-fans out to Postgres and Kafka sinks from a single source cursor.
+- **One interface** (`transform: bytes -> [bytes]`) for every component.
+- **Pipelines are data** — `pipeline.toml`, not host code.
+- **Capabilities are data** — granted per node, enforced at load time (with a test to prove it).
+- **`node!` SDK macro** — components are typed closures, zero bindgen boilerplate.
+- `cargo build` is clean; `cargo test` covers manifest validation and capability enforcement.
 
-**cross-dex-arb** — decodes Uniswap v3 and Balancer v2 Swap events, normalises to a common
-WIT type, enriches with USD prices and token decimals, streams to a live SSE dashboard showing
-cross-DEX price spreads per token pair.
+Built on Wasmtime 44 (WASIp2 / WASI 0.2.x). WASIp3 (async streams, structured concurrency) is
+tracked upstream; Liminal will migrate once it stabilises in Wasmtime.
 
-Built on Wasmtime 44 (WASIp2 / WASI 0.2.x). WASIp3 (async streams, structured concurrency)
-is tracked upstream; Liminal will migrate once it stabilises in Wasmtime.
+### Next
+
+- Durable cursor / checkpointing for resume-after-restart and hot-swap without resync.
+- Concurrent fan-out across sibling branches (today the DAG is walked breadth-first per message).
+- Finer-grained capabilities (key-value, scoped filesystem, per-origin HTTP allow-lists).
 
 ---
 
