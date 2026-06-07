@@ -5,7 +5,9 @@ list **before any event reaches the system-of-record**, and proves the one thing
 Subgraph + Substreams + sidecar stack can express: **architectural non-ingestion under capability
 isolation**.
 
-Full spec: [RFC-LIM-001](./RFC.md).
+Full spec: [RFC-LIM-001](./RFC.md). **Live in your browser:** [web-nbgn.vercel.app](https://web-nbgn.vercel.app)
+— the real compiled components run client-side via [jco](https://github.com/bytecodealliance/jco)
+(see [`../../web/`](../../web/)).
 
 ```
 fixtures ─▶ decoder ─▶ screener
