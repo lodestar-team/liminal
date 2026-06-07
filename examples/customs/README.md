@@ -54,11 +54,28 @@ code change. The screener's compiled-in list becomes an origin-scoped `wasi:http
 provider (tracked as **W2** in the root README roadmap); durable hold + verdict caching land with
 `wasi:keyvalue` (**W4**); signed, content-addressed composition with **W1/W8**.
 
+## Signed composition (W1+ / W8)
+
+The topology is signed. The canonical composition — component ids + the `sha256` of their wasm
+bytes + capability declarations + the edge set — is hashed and signed with ed25519, excluding all
+`${VAR}` secrets. `customs.pub` and `customs.pipeline.toml.sig` are committed as the attestation
+artifacts (the secret `customs.key` is git-ignored).
+
+```bash
+just verify-customs          # checks the committed signature + content addresses
+#   …or: liminal compose verify examples/customs/customs.pipeline.toml \
+#          --sig examples/customs/customs.pipeline.toml.sig --pub examples/customs/customs.pub
+```
+
+Rebuilding the components changes their content addresses, so re-sign after a rebuild:
+`liminal compose sign examples/customs/customs.pipeline.toml --key examples/customs/customs.key`.
+
 ## Status against the RFC
 
 Shipped: conditional `when` routing (**W3**), fixture + address-filtered EVM source (**W5**), the
-seven components and manifest (**W6**), the attestation + drop-path tests.
+seven components and manifest (**W6**), content addressing + `compose hash|sign|verify` (**W1+/W8**),
+the attestation + drop-path tests.
 
 Pending (see root README roadmap): HTTP origin allow-lists (**W2**), `wasi:keyvalue` namespacing
-(**W4** — needs a Wasmtime 45 bump), content addressing + signing (**W1+/W8**), and the full
-infra harness — `screening-server`, `docker-compose`, Redis-backed durable hold (**W7**).
+(**W4** — needs a Wasmtime 45 bump), and the full infra harness — `screening-server`,
+`docker-compose`, Redis-backed durable hold (**W7**).

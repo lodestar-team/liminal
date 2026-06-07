@@ -1,1 +1,5 @@
 /target
+
+# Signing secrets — never commit. Public keys (*.pub) and signatures (*.sig)
+# are the attestation artifacts and ARE committed.
+*.key

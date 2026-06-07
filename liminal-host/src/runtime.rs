@@ -290,6 +290,7 @@ mod tests {
         NodeSpec {
             id: "enricher".into(),
             wasm: "../examples/cross-dex-arb/enricher.wasm".into(),
+            sha256: None,
             capabilities: caps.iter().map(|s| s.to_string()).collect(),
             env: BTreeMap::new(),
         }

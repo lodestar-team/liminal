@@ -173,12 +173,33 @@ export ETH_RPC_URL=wss://your-node
 
 # Cross-DEX arbitrage tracker → dashboard at http://localhost:8080
 just run-arb
-#   …or: cargo run --release -p liminal-host -- examples/cross-dex-arb/pipeline.toml
+#   …or: cargo run --release -p liminal-host -- run examples/cross-dex-arb/pipeline.toml
 
 # Uniswap v3 swaps → Postgres + Kafka fan-out (stop after 5 messages)
 just run-uni --limit 5
-#   …or: cargo run --release -p liminal-host -- examples/uni-v3-swaps/pipeline.toml --limit 5
+#   …or: cargo run --release -p liminal-host -- run examples/uni-v3-swaps/pipeline.toml --limit 5
+
+# Customs compliance demo — fully offline, no RPC/services
+just run-customs
 ```
+
+### Composition attestation (`compose`)
+
+Beyond running pipelines, the `liminal` binary can hash, sign, and verify a composition — the
+provenance story behind Customs (the topology is *signed*):
+
+```bash
+liminal compose hash   examples/customs/customs.pipeline.toml      # content-address each component + canonical hash
+liminal compose keygen examples/customs/customs                    # → customs.key (secret), customs.pub
+liminal compose sign   examples/customs/customs.pipeline.toml --key examples/customs/customs.key
+liminal compose verify examples/customs/customs.pipeline.toml \
+    --sig examples/customs/customs.pipeline.toml.sig --pub examples/customs/customs.pub
+```
+
+The signed body is the **canonical composition** — component ids + the `sha256` of their actual
+wasm bytes + capability declarations + the edge set + the structural source filter — with every
+`${VAR}` runtime secret excluded. The same signature therefore validates in staging and prod with
+different endpoints; it attests *structure and capability boundaries*, not config.
 
 `DATABASE_URL` and `KAFKA_BROKERS` are optional — the uni-v3 manifest supplies `${VAR:-default}`
 fallbacks, and the PoC sinks emit SQL / JSON to stdout rather than connecting to live services.
@@ -223,12 +244,12 @@ they land.
 ### Platform deltas (reusable — every future effectful pipeline needs these)
 
 - [x] **W1 — Declarative manifest + loader** (`pipeline.toml`, `${VAR}` interpolation, DAG validation) — *shipped in v0.2*
-- [ ] **W1+ — Content addressing** (`sha256` per component; `liminal compose hash` canonical topology hash)
+- [x] **W1+ — Content addressing** (`sha256` per component; `liminal compose hash` canonical composition hash)
 - [x] **W3 — Conditional routing** (`when = "<case>"` edges; host dispatches on the output `"tag"` discriminant)
 - [x] **W5 — Source generalization** (EVM `topic0` + address filter; offline `fixture` source)
+- [x] **W8 — Compose signing/verification** (`liminal compose keygen|sign|verify`, ed25519; cosign as production guidance)
 - [ ] **W2 — HTTP origin allow-list** (host-enforced `allow_origins` on `wasi:http/outgoing-handler`)
 - [ ] **W4 — `wasi:keyvalue` with namespace scoping** (in-memory + Redis; needs a Wasmtime 45 bump or a host hand-roll — `wasmtime-wasi-keyvalue` is 45-only)
-- [ ] **W8 — Compose signing/verification** (`liminal compose sign|verify`, ed25519/minisign; cosign as production guidance)
 
 ### Customs application & harness
 
@@ -243,13 +264,13 @@ they land.
 
 | M | Workstreams | Status | Outcome |
 |---|---|---|---|
-| **M0** | W1 | ◐ | Manifest schema + loader (v0.2); content addressing (W1+) pending |
+| **M0** | W1 + W1+ | ✅ | Manifest schema + loader + content addressing + `compose hash` |
 | **M1** | W2 + W4 | ☐ | HTTP origin allow-lists; key-value with namespace scoping |
 | **M2** | W3 | ✅ | Variant-output routing + `when` edges (**the centerpiece**) |
 | **M3** | W5 | ✅ | Generalized EVM source + offline fixture source |
 | **M4** | W6 | ✅ | The seven Customs components + manifest + attestation test |
 | **M5** | W7 | ◐ | **Money shot runs offline** + drop-path test; full infra harness pending |
-| **M6** | W8 | ☐ | `compose sign/verify`, audit-artifact doc, attestation test in CI |
+| **M6** | W8 | ◐ | `compose keygen/sign/verify` shipped; audit-artifact doc + CI verify pending |
 
 ### General platform backlog (not Customs-specific)
 

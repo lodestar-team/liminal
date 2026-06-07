@@ -56,6 +56,10 @@ pub struct NodeSpec {
     pub id: String,
     /// Path to the component `.wasm`, relative to the current directory.
     pub wasm: String,
+    /// Optional content address (hex sha256) of the wasm. `compose verify`
+    /// cross-checks it against the file; `compose hash` can fill it in.
+    #[serde(default)]
+    pub sha256: Option<String>,
     /// Capabilities granted to this node and this node only. See [`Capability`].
     #[serde(default)]
     pub capabilities: Vec<String>,
@@ -126,9 +130,20 @@ impl Manifest {
     /// Load a manifest from a TOML file, interpolating `${ENV_VAR}` references,
     /// then validate the DAG.
     pub fn load(path: &str) -> Result<Self> {
+        Self::load_inner(path, false)
+    }
+
+    /// Like [`Manifest::load`] but unresolved `${ENV_VAR}` references become
+    /// empty strings instead of errors. Used by `compose`, which only cares
+    /// about the structural topology — not the secret runtime values it excludes.
+    pub fn load_lenient(path: &str) -> Result<Self> {
+        Self::load_inner(path, true)
+    }
+
+    fn load_inner(path: &str, lenient: bool) -> Result<Self> {
         let raw = std::fs::read_to_string(path)
             .with_context(|| format!("reading manifest {path}"))?;
-        let interpolated = interpolate_env(&raw)
+        let interpolated = interpolate_env(&raw, lenient)
             .with_context(|| format!("interpolating env vars in {path}"))?;
         let manifest: Manifest = toml::from_str(&interpolated)
             .with_context(|| format!("parsing manifest {path}"))?;
@@ -199,7 +214,7 @@ impl Manifest {
 /// A missing variable is a hard error — better than silently shipping an empty
 /// RPC URL — unless a default is supplied with `${NAME:-default}`, in which case
 /// the default (which may be empty) is used.
-fn interpolate_env(input: &str) -> Result<String> {
+fn interpolate_env(input: &str, lenient: bool) -> Result<String> {
     let mut out = String::with_capacity(input.len());
     let mut rest = input;
     while let Some(start) = rest.find("${") {
@@ -217,6 +232,7 @@ fn interpolate_env(input: &str) -> Result<String> {
         let val = match (std::env::var(name), default) {
             (Ok(v), _) => v,
             (Err(_), Some(d)) => d.to_string(),
+            (Err(_), None) if lenient => String::new(),
             (Err(_), None) => anyhow::bail!(
                 "environment variable {name:?} referenced but not set \
                  (use ${{{name}:-default}} to supply a fallback)"
@@ -237,11 +253,13 @@ mod tests {
     fn interpolation_substitutes_and_errors() {
         std::env::set_var("LIMINAL_TEST_VAR", "wss://example");
         assert_eq!(
-            interpolate_env("rpc = \"${LIMINAL_TEST_VAR}/path\"").unwrap(),
+            interpolate_env("rpc = \"${LIMINAL_TEST_VAR}/path\"", false).unwrap(),
             "rpc = \"wss://example/path\""
         );
-        assert!(interpolate_env("${DEFINITELY_NOT_SET_42}").is_err());
-        assert!(interpolate_env("no vars here").unwrap() == "no vars here");
+        assert!(interpolate_env("${DEFINITELY_NOT_SET_42}", false).is_err());
+        // Lenient: unknown vars collapse to empty rather than erroring.
+        assert_eq!(interpolate_env("x${DEFINITELY_NOT_SET_42}y", true).unwrap(), "xy");
+        assert!(interpolate_env("no vars here", false).unwrap() == "no vars here");
     }
 
     #[test]

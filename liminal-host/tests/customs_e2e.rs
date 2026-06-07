@@ -20,7 +20,7 @@ fn flagged_transfers_never_reach_the_writer() {
     }
 
     let output = Command::new(env!("CARGO_BIN_EXE_liminal"))
-        .arg("examples/customs/customs.pipeline.toml")
+        .args(["run", "examples/customs/customs.pipeline.toml"])
         .current_dir(REPO)
         .output()
         .expect("run liminal");

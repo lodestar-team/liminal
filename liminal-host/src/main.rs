@@ -6,7 +6,7 @@
 //! through. Pipelines are data, not code.
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use tracing::info;
 use wasmtime::component::ResourceTable;
 use wasmtime::{Config, Engine};
@@ -16,6 +16,7 @@ use wasmtime_wasi_http::{
     WasiHttpCtx,
 };
 
+mod compose;
 mod dashboard;
 mod manifest;
 mod node_bindings;
@@ -58,11 +59,48 @@ pub fn make_state(ctx: WasiCtx) -> HostState {
 #[derive(Parser)]
 #[command(name = "liminal", about = "Generic WASIp2 pipeline runtime")]
 struct Cli {
-    /// Path to the pipeline manifest (TOML).
-    manifest: String,
-    /// Stop after this many source messages (handy for demos).
-    #[arg(long)]
-    limit: Option<u64>,
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Run a pipeline from its manifest.
+    Run {
+        /// Path to the pipeline manifest (TOML).
+        manifest: String,
+        /// Stop after this many source messages (handy for demos).
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+    /// Inspect, hash, sign, and verify a pipeline composition.
+    #[command(subcommand)]
+    Compose(ComposeCmd),
+}
+
+#[derive(Subcommand)]
+enum ComposeCmd {
+    /// Print component content addresses and the canonical composition hash.
+    Hash { manifest: String },
+    /// Generate an ed25519 keypair: <out>.key (secret) and <out>.pub.
+    Keygen {
+        /// Output path prefix (e.g. `customs` → customs.key, customs.pub).
+        out: String,
+    },
+    /// Sign a composition; writes <manifest>.sig.
+    Sign {
+        manifest: String,
+        #[arg(long)]
+        key: String,
+    },
+    /// Verify a composition's signature and component content addresses.
+    Verify {
+        manifest: String,
+        #[arg(long)]
+        sig: String,
+        #[arg(long = "pub")]
+        public: String,
+    },
 }
 
 #[tokio::main]
@@ -74,9 +112,19 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let cli = Cli::parse();
+    match Cli::parse().command {
+        Command::Run { manifest, limit } => run(&manifest, limit).await,
+        Command::Compose(ComposeCmd::Hash { manifest }) => compose::hash(&manifest),
+        Command::Compose(ComposeCmd::Keygen { out }) => compose::keygen(&out),
+        Command::Compose(ComposeCmd::Sign { manifest, key }) => compose::sign(&manifest, &key),
+        Command::Compose(ComposeCmd::Verify { manifest, sig, public }) => {
+            compose::verify(&manifest, &sig, &public)
+        }
+    }
+}
 
-    let manifest = Manifest::load(&cli.manifest)?;
+async fn run(manifest_path: &str, limit: Option<u64>) -> Result<()> {
+    let manifest = Manifest::load(manifest_path)?;
     info!(name = %manifest.name, nodes = manifest.nodes.len(), "loaded manifest");
 
     let mut config = Config::new();
@@ -99,5 +147,5 @@ async fn main() -> Result<()> {
         .await
         .context("connecting to source")?;
 
-    runtime.run(&mut source, cli.limit).await
+    runtime.run(&mut source, limit).await
 }

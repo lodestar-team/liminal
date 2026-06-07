@@ -48,11 +48,18 @@ test:
 
 # Run a pipeline from its manifest. ETH_RPC_URL must be set.
 run-arb *ARGS:
-    cargo run --release -p liminal-host -- examples/cross-dex-arb/pipeline.toml {{ARGS}}
+    cargo run --release -p liminal-host -- run examples/cross-dex-arb/pipeline.toml {{ARGS}}
 
 run-uni *ARGS:
-    cargo run --release -p liminal-host -- examples/uni-v3-swaps/pipeline.toml {{ARGS}}
+    cargo run --release -p liminal-host -- run examples/uni-v3-swaps/pipeline.toml {{ARGS}}
 
 # Customs compliance demo — runs fully offline from fixtures (no RPC/services).
 run-customs *ARGS:
-    cargo run --release -p liminal-host -- examples/customs/customs.pipeline.toml {{ARGS}}
+    cargo run --release -p liminal-host -- run examples/customs/customs.pipeline.toml {{ARGS}}
+
+# Verify the Customs composition signature + content addresses (W8).
+verify-customs:
+    cargo run --release -p liminal-host -- compose verify \
+        examples/customs/customs.pipeline.toml \
+        --sig examples/customs/customs.pipeline.toml.sig \
+        --pub examples/customs/customs.pub
