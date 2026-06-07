@@ -199,15 +199,68 @@ running against live Ethereum mainnet.
 Built on Wasmtime 44 (WASIp2 / WASI 0.2.x). WASIp3 (async streams, structured concurrency) is
 tracked upstream; Liminal will migrate once it stabilises in Wasmtime.
 
-### Next
+---
 
-- Durable cursor / checkpointing for resume-after-restart and hot-swap without resync.
-- Concurrent fan-out across sibling branches (today the DAG is walked breadth-first per message).
-- Finer-grained capabilities (key-value, scoped filesystem, per-origin HTTP allow-lists).
+## Roadmap — Customs (RFC-LIM-001)
+
+[**Customs**](./examples/customs/RFC.md) is the next example and the first *compliance-grade* one:
+a sanctions-screened ERC-20 transfer indexer that proves the one thing no Subgraph + Substreams +
+sidecar stack can express — **architectural non-ingestion under capability isolation**. A flagged
+transfer is routed to quarantine and is *structurally* incapable of reaching the system-of-record
+writer, because the writer has no edge from the flagged branch and imports no HTTP. The compliance
+control is the topology, and the topology is signed.
+
+```
+fixtures / evm-logs ─▶ decoder ─▶ screener
+                                    ├─ cleared ──────▶ enricher ─▶ {sink-sor, sink-kafka}
+                                    ├─ flagged ───────────────────▶ sink-quarantine
+                                    └─ indeterminate ─────────────▶ sink-hold   (fail-closed)
+```
+
+This is a long build, tracked as eight workstreams (W) across seven milestones (M). Tick boxes as
+they land.
+
+### Platform deltas (reusable — every future effectful pipeline needs these)
+
+- [x] **W1 — Declarative manifest + loader** (`pipeline.toml`, `${VAR}` interpolation, DAG validation) — *shipped in v0.2*
+- [ ] **W1+ — Content addressing** (`sha256` per component; `liminal compose hash` canonical topology hash)
+- [x] **W3 — Conditional routing** (`when = "<case>"` edges; host dispatches on the output `"tag"` discriminant)
+- [x] **W5 — Source generalization** (EVM `topic0` + address filter; offline `fixture` source)
+- [ ] **W2 — HTTP origin allow-list** (host-enforced `allow_origins` on `wasi:http/outgoing-handler`)
+- [ ] **W4 — `wasi:keyvalue` with namespace scoping** (in-memory + Redis; needs a Wasmtime 45 bump or a host hand-roll — `wasmtime-wasi-keyvalue` is 45-only)
+- [ ] **W8 — Compose signing/verification** (`liminal compose sign|verify`, ed25519/minisign; cosign as production guidance)
+
+### Customs application & harness
+
+- [x] **W6 — Components** — `decoder` · `screener` · `enricher` · `sink-sor` (no HTTP) · `sink-kafka` · `sink-quarantine` · `sink-hold`
+- [x] **W6 — `customs.pipeline.toml`** manifest with `when` edges
+- [x] **W6 — Attestation test** — parses the manifest; asserts `sink-sor` has no `http` capability and every path to it originates at `screener … when = "cleared"`. *Failing this is a compliance regression.*
+- [x] **W7 — Offline run** — `fixtures/transfers.jsonl` + `just run-customs`, fully offline (no RPC/services)
+- [x] **W7 — Drop-path integration test** — flagged → quarantine, **absent** from SoR/Kafka; indeterminate → hold (`tests/customs_e2e.rs`)
+- [ ] **W7 — Full harness** — `screening-server`, `docker-compose.yml` (pg/kafka/redis), fail-closed + cache-bust integration tests
+
+### Milestones
+
+| M | Workstreams | Status | Outcome |
+|---|---|---|---|
+| **M0** | W1 | ◐ | Manifest schema + loader (v0.2); content addressing (W1+) pending |
+| **M1** | W2 + W4 | ☐ | HTTP origin allow-lists; key-value with namespace scoping |
+| **M2** | W3 | ✅ | Variant-output routing + `when` edges (**the centerpiece**) |
+| **M3** | W5 | ✅ | Generalized EVM source + offline fixture source |
+| **M4** | W6 | ✅ | The seven Customs components + manifest + attestation test |
+| **M5** | W7 | ◐ | **Money shot runs offline** + drop-path test; full infra harness pending |
+| **M6** | W8 | ☐ | `compose sign/verify`, audit-artifact doc, attestation test in CI |
+
+### General platform backlog (not Customs-specific)
+
+- [ ] Durable cursor / checkpointing for resume-after-restart and hot-swap without resync.
+- [ ] Concurrent fan-out across sibling branches (today the DAG is walked breadth-first per message).
+- [ ] WASIp3 migration (mid-block `stream<T>` emission) once it stabilises in Wasmtime.
 
 ---
 
 ## References
+- [RFC-LIM-001 — Customs](./examples/customs/RFC.md)
 - [WASI 0.2 / wasi.dev](https://wasi.dev)
 - [Wasmtime](https://github.com/bytecodealliance/wasmtime)
 - [Component Model spec](https://github.com/WebAssembly/component-model)

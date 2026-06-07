@@ -94,10 +94,10 @@ async fn main() -> Result<()> {
         tokio::spawn(dashboard::serve(port, html, tx));
     }
 
-    info!(rpc = %manifest.source.rpc, "connecting to source");
-    let mut source = source::EvmSource::connect(&manifest.source.rpc, &manifest.source.topics)
+    info!(source = %manifest.source.kind, "connecting to source");
+    let mut source = source::Source::connect(&manifest.source)
         .await
-        .context("connecting to EVM source")?;
+        .context("connecting to source")?;
 
     runtime.run(&mut source, cli.limit).await
 }

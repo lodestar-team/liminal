@@ -1,0 +1,10 @@
+[package]
+name = "customs-types"
+version = "0.2.0"
+edition = "2021"
+
+# Wire types for the Customs compliance pipeline. The `Verdict` enum is
+# internally tagged on "tag" so the host can route on the discriminant (W3).
+
+[dependencies]
+serde = { workspace = true }

@@ -1941,6 +1941,81 @@ dependencies = [
 ]
 
 [[package]]
+name = "customs-decoder"
+version = "0.2.0"
+dependencies = [
+ "alloy-primitives",
+ "customs-types",
+ "liminal-sdk",
+ "wit-bindgen 0.57.1",
+]
+
+[[package]]
+name = "customs-enricher"
+version = "0.2.0"
+dependencies = [
+ "customs-types",
+ "liminal-sdk",
+ "wit-bindgen 0.57.1",
+]
+
+[[package]]
+name = "customs-screener"
+version = "0.2.0"
+dependencies = [
+ "customs-types",
+ "liminal-sdk",
+ "wit-bindgen 0.57.1",
+]
+
+[[package]]
+name = "customs-sink-hold"
+version = "0.2.0"
+dependencies = [
+ "customs-types",
+ "liminal-sdk",
+ "serde_json",
+ "wit-bindgen 0.57.1",
+]
+
+[[package]]
+name = "customs-sink-kafka"
+version = "0.2.0"
+dependencies = [
+ "customs-types",
+ "liminal-sdk",
+ "serde_json",
+ "wit-bindgen 0.57.1",
+]
+
+[[package]]
+name = "customs-sink-quarantine"
+version = "0.2.0"
+dependencies = [
+ "customs-types",
+ "liminal-sdk",
+ "serde_json",
+ "wit-bindgen 0.57.1",
+]
+
+[[package]]
+name = "customs-sink-sor"
+version = "0.2.0"
+dependencies = [
+ "customs-types",
+ "liminal-sdk",
+ "serde_json",
+ "wit-bindgen 0.57.1",
+]
+
+[[package]]
+name = "customs-types"
+version = "0.2.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "darling"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

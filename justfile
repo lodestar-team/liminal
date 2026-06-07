@@ -21,7 +21,10 @@ build-components:
     cargo build --target wasm32-wasip2 --release \
         -p arb-decoder -p arb-enricher -p arb-sink-json \
         -p uni-v3-decoder -p uni-v3-price-enricher \
-        -p uni-v3-sink-postgres -p uni-v3-sink-kafka
+        -p uni-v3-sink-postgres -p uni-v3-sink-kafka \
+        -p customs-decoder -p customs-screener -p customs-enricher \
+        -p customs-sink-sor -p customs-sink-kafka \
+        -p customs-sink-quarantine -p customs-sink-hold
     # Stage cross-dex-arb artifacts
     cp target/wasm32-wasip2/release/arb_decoder.wasm   examples/cross-dex-arb/decoder.wasm
     cp target/wasm32-wasip2/release/arb_enricher.wasm  examples/cross-dex-arb/enricher.wasm
@@ -31,6 +34,14 @@ build-components:
     cp target/wasm32-wasip2/release/uni_v3_price_enricher.wasm examples/uni-v3-swaps/price-enricher.wasm
     cp target/wasm32-wasip2/release/uni_v3_sink_postgres.wasm  examples/uni-v3-swaps/sink-postgres.wasm
     cp target/wasm32-wasip2/release/uni_v3_sink_kafka.wasm     examples/uni-v3-swaps/sink-kafka.wasm
+    # Stage customs artifacts
+    cp target/wasm32-wasip2/release/customs_decoder.wasm         examples/customs/decoder.wasm
+    cp target/wasm32-wasip2/release/customs_screener.wasm        examples/customs/screener.wasm
+    cp target/wasm32-wasip2/release/customs_enricher.wasm        examples/customs/enricher.wasm
+    cp target/wasm32-wasip2/release/customs_sink_sor.wasm        examples/customs/sink-sor.wasm
+    cp target/wasm32-wasip2/release/customs_sink_kafka.wasm      examples/customs/sink-kafka.wasm
+    cp target/wasm32-wasip2/release/customs_sink_quarantine.wasm examples/customs/sink-quarantine.wasm
+    cp target/wasm32-wasip2/release/customs_sink_hold.wasm       examples/customs/sink-hold.wasm
 
 test:
     cargo test -p liminal-host
@@ -41,3 +52,7 @@ run-arb *ARGS:
 
 run-uni *ARGS:
     cargo run --release -p liminal-host -- examples/uni-v3-swaps/pipeline.toml {{ARGS}}
+
+# Customs compliance demo — runs fully offline from fixtures (no RPC/services).
+run-customs *ARGS:
+    cargo run --release -p liminal-host -- examples/customs/customs.pipeline.toml {{ARGS}}

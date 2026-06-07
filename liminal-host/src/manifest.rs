@@ -30,13 +30,22 @@ pub struct Manifest {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourceSpec {
-    /// Currently only `"evm"` — an EVM log subscription over WebSocket.
+    /// `"evm"` — an EVM log subscription over WebSocket; or
+    /// `"fixture"` — newline-delimited JSON messages from a file (offline runs).
     #[serde(rename = "type")]
     pub kind: String,
-    /// RPC endpoint. Supports `${ENV_VAR}` interpolation.
-    pub rpc: String,
-    /// Event signature hashes (topic0) to subscribe to.
+    /// RPC endpoint for `evm`. Supports `${ENV_VAR}` interpolation.
+    #[serde(default)]
+    pub rpc: Option<String>,
+    /// Event signature hashes (topic0) to subscribe to (`evm`).
+    #[serde(default)]
     pub topics: Vec<String>,
+    /// Optional contract-address allow-list to filter on (`evm`). Empty = any.
+    #[serde(default)]
+    pub addresses: Vec<String>,
+    /// Path to a newline-delimited JSON fixture file (`fixture`).
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 /// One component in the DAG.
@@ -56,11 +65,19 @@ pub struct NodeSpec {
 }
 
 /// A directed edge `from -> to`. The special source id is `"source"`.
+///
+/// `when` makes the edge conditional: the message flows along it only if the
+/// emitting node's output carries a discriminant (`"tag"` field) equal to
+/// `when`. An edge with no `when` is unconditional (classic fan-out). This is
+/// W3 — the routing that lets a `flagged` verdict reach quarantine while never
+/// having an edge to the writer.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Edge {
     pub from: String,
     pub to: String,
+    #[serde(default)]
+    pub when: Option<String>,
 }
 
 /// Live SSE dashboard configuration.
@@ -122,8 +139,21 @@ impl Manifest {
     /// Reject malformed graphs early, with a clear message, before we touch
     /// Wasmtime. Cheap insurance against a baffling runtime panic later.
     fn validate(&self) -> Result<()> {
-        if self.source.kind != "evm" {
-            bail!("unsupported source type {:?} (only \"evm\" for now)", self.source.kind);
+        match self.source.kind.as_str() {
+            "evm" => {
+                if self.source.rpc.is_none() {
+                    bail!("evm source requires `rpc`");
+                }
+                if self.source.topics.is_empty() {
+                    bail!("evm source requires at least one `topics` entry");
+                }
+            }
+            "fixture" => {
+                if self.source.path.is_none() {
+                    bail!("fixture source requires `path`");
+                }
+            }
+            other => bail!("unsupported source type {other:?} (known: evm, fixture)"),
         }
         if self.nodes.is_empty() {
             bail!("manifest has no nodes");
@@ -231,6 +261,45 @@ mod tests {
         "#;
         let m: Manifest = toml::from_str(toml).unwrap();
         assert!(m.validate().is_err());
+    }
+
+    /// The Customs compliance claim, asserted against the real manifest. If
+    /// this fails, the topology no longer guarantees non-ingestion — treat it
+    /// as a compliance regression, not a flaky test.
+    #[test]
+    fn customs_writer_is_unreachable_by_flagged() {
+        let path = "../examples/customs/customs.pipeline.toml";
+        if !std::path::Path::new(path).exists() {
+            eprintln!("skipping: customs manifest not present");
+            return;
+        }
+        let m = Manifest::load(path).expect("customs manifest must load");
+
+        // 1. The writer has no `http` capability — it cannot call out.
+        let sor = m.nodes.iter().find(|n| n.id == "sink-sor").expect("sink-sor node");
+        assert!(
+            !sor.capabilities.iter().any(|c| c == "http"),
+            "compliance regression: sink-sor must NOT hold the http capability"
+        );
+
+        // 2. Every edge into the writer comes from the enricher.
+        let into_sor: Vec<_> = m.edges.iter().filter(|e| e.to == "sink-sor").collect();
+        assert!(!into_sor.is_empty(), "sink-sor must be reachable");
+        for e in &into_sor {
+            assert_eq!(e.from, "enricher", "the only path to sink-sor is via enricher");
+        }
+
+        // 3. Every edge into the enricher comes from screener `when = cleared`.
+        let into_enricher: Vec<_> = m.edges.iter().filter(|e| e.to == "enricher").collect();
+        assert!(!into_enricher.is_empty(), "enricher must be reachable");
+        for e in &into_enricher {
+            assert_eq!(e.from, "screener", "enricher is fed only by the screener");
+            assert_eq!(
+                e.when.as_deref(),
+                Some("cleared"),
+                "compliance regression: only CLEARED verdicts may reach the enricher → writer"
+            );
+        }
     }
 
     #[test]

@@ -1,0 +1,15 @@
+[package]
+name = "customs-sink-sor"
+version = "0.2.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+# The compliance-critical writer. Note the dependencies: NO http, NO wasi.
+# It is structurally incapable of calling out.
+[dependencies]
+wit-bindgen = { workspace = true }
+liminal-sdk = { path = "../../../liminal-sdk" }
+customs-types = { path = "../types" }
+serde_json = { workspace = true }

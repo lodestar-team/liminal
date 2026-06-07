@@ -11,6 +11,14 @@ members = [
     "examples/cross-dex-arb/decoder",
     "examples/cross-dex-arb/enricher",
     "examples/cross-dex-arb/sink-json",
+    "examples/customs/types",
+    "examples/customs/decoder",
+    "examples/customs/screener",
+    "examples/customs/enricher",
+    "examples/customs/sink-sor",
+    "examples/customs/sink-kafka",
+    "examples/customs/sink-quarantine",
+    "examples/customs/sink-hold",
 ]
 # `cargo build` (no target) builds only the natively-linkable crates. The
 # component crates are cdylibs with WIT exports that only link for wasm32-wasip2,
@@ -20,6 +28,7 @@ default-members = [
     "liminal-sdk",
     "examples/uni-v3-swaps/types",
     "examples/cross-dex-arb/types",
+    "examples/customs/types",
 ]
 resolver = "2"
 

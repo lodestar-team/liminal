@@ -18,17 +18,24 @@ use wasmtime_wasi::WasiCtxBuilder;
 
 use crate::manifest::{Capability, Manifest, NodeSpec, SOURCE_ID};
 use crate::node_bindings::LiminalNode;
-use crate::source::EvmSource;
+use crate::source::Source;
 use crate::{make_state, HostState};
 
+/// A downstream edge: the target node index and, optionally, the discriminant
+/// (`when`) a message must carry to travel along it.
+struct Successor {
+    to: usize,
+    when: Option<String>,
+}
+
 /// A single instantiated node: its own store, its own component instance, and
-/// the indices of the nodes its output flows to.
+/// the edges its output flows along.
 struct Node {
     id: String,
     store: Store<HostState>,
     instance: LiminalNode,
-    /// Indices into [`Runtime::nodes`] that this node feeds.
-    successors: Vec<usize>,
+    /// Outgoing edges into [`Runtime::nodes`].
+    successors: Vec<Successor>,
 }
 
 impl Node {
@@ -36,6 +43,17 @@ impl Node {
     fn is_terminal(&self) -> bool {
         self.successors.is_empty()
     }
+}
+
+/// Read the routing discriminant (`"tag"`) from a JSON message, if present.
+/// Components emit routable variants as serde internally-tagged enums
+/// (`#[serde(tag = "tag")]`), so the case name lands in this field.
+fn message_tag(payload: &[u8]) -> Option<String> {
+    serde_json::from_slice::<serde_json::Value>(payload)
+        .ok()?
+        .get("tag")?
+        .as_str()
+        .map(str::to_owned)
 }
 
 /// The wired-up pipeline, ready to run.
@@ -83,7 +101,7 @@ impl Runtime {
                 }
             } else {
                 let from = index_of(&edge.from)?;
-                nodes[from].successors.push(to);
+                nodes[from].successors.push(Successor { to, when: edge.when.clone() });
             }
         }
 
@@ -108,13 +126,12 @@ impl Runtime {
 
     /// Run until the source is exhausted or `limit` source messages have been
     /// processed (whichever comes first).
-    pub async fn run(mut self, source: &mut EvmSource, limit: Option<u64>) -> Result<()> {
+    pub async fn run(mut self, source: &mut Source, limit: Option<u64>) -> Result<()> {
         info!(roots = self.roots.len(), "pipeline running");
         let mut processed = 0u64;
 
         while let Some(result) = source.next().await {
-            let log = result?;
-            let message = serde_json::to_vec(&log).context("serializing source message")?;
+            let message = result?;
 
             // Breadth-first propagation through the DAG, one source message at a
             // time. Deterministic and easy to reason about; concurrent fan-out
@@ -124,14 +141,34 @@ impl Runtime {
 
             while let Some((idx, input)) = queue.pop_front() {
                 let outputs = self.call_node(idx, input).await?;
-                let successors = self.nodes[idx].successors.clone();
+                // Snapshot routing decisions (to, when) so we don't hold a
+                // borrow on self.nodes across the enqueue.
+                let routes: Vec<(usize, Option<String>)> = self.nodes[idx]
+                    .successors
+                    .iter()
+                    .map(|s| (s.to, s.when.clone()))
+                    .collect();
+
                 for out in outputs {
-                    if successors.is_empty() {
+                    if routes.is_empty() {
                         self.emit(idx, out);
-                    } else {
-                        for &s in &successors {
-                            queue.push_back((s, out.clone()));
+                        continue;
+                    }
+                    let tag = message_tag(&out);
+                    let mut routed = false;
+                    for (to, when) in &routes {
+                        // Unconditional edge, or the message's tag matches.
+                        if when.is_none() || when.as_deref() == tag.as_deref() {
+                            queue.push_back((*to, out.clone()));
+                            routed = true;
                         }
+                    }
+                    if !routed {
+                        debug!(
+                            node = %self.nodes[idx].id,
+                            tag = tag.as_deref().unwrap_or("<none>"),
+                            "output matched no outgoing edge; dropping"
+                        );
                     }
                 }
             }

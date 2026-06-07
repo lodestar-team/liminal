@@ -1,0 +1,13 @@
+[package]
+name = "customs-decoder"
+version = "0.2.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = { workspace = true }
+liminal-sdk = { path = "../../../liminal-sdk" }
+customs-types = { path = "../types" }
+alloy-primitives = { workspace = true }

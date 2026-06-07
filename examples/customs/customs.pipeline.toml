@@ -1,0 +1,97 @@
+# Customs — compliance-gated ERC-20 transfer indexer (RFC-LIM-001).
+#
+#   fixtures ─▶ decoder ─▶ screener
+#                            ├─ cleared ──────▶ enricher ─▶ {sink-sor, sink-kafka}
+#                            ├─ flagged ───────────────────▶ sink-quarantine
+#                            └─ indeterminate ─────────────▶ sink-hold
+#
+# The compliance claim, verifiable from this file alone:
+#   1. `sink-sor` declares NO http capability — it cannot call out.
+#   2. The only edge into `sink-sor` is `enricher`, whose only inbound edge is
+#      `screener … when = "cleared"`. A flagged/indeterminate transfer has no
+#      path to the writer.
+#
+# Runs fully offline:
+#   cargo run -p liminal-host -- examples/customs/customs.pipeline.toml
+
+name = "customs"
+
+[source]
+type = "fixture"
+path = "examples/customs/fixtures/transfers.jsonl"
+# Production swaps this block for an evm source (env refs shown with angle
+# brackets so they aren't interpolated here):
+#   type = "evm"
+#   rpc = "<ETH_WSS>"
+#   topics = ["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"]
+#   addresses = ["<USDC>", "<WETH>", "<WBTC>"]
+
+[[nodes]]
+id = "decoder"
+wasm = "examples/customs/decoder.wasm"
+# zero capabilities — pure compute
+
+[[nodes]]
+id = "screener"
+wasm = "examples/customs/screener.wasm"
+# zero capabilities this milestone (compiled-in list); W2 adds origin-scoped http
+
+[[nodes]]
+id = "enricher"
+wasm = "examples/customs/enricher.wasm"
+
+[[nodes]]
+id = "sink-sor"
+wasm = "examples/customs/sink-sor.wasm"
+capabilities = ["stdout"]
+# NO "http" — the compliance-critical writer cannot exfiltrate or call out
+env = { POSTGRES_CONFIG = "${DATABASE_URL:-postgres://localhost/customs}" }
+
+[[nodes]]
+id = "sink-kafka"
+wasm = "examples/customs/sink-kafka.wasm"
+capabilities = ["stdout"]
+env = { KAFKA_CONFIG = "${KAFKA_BROKERS:-localhost:9092}" }
+
+[[nodes]]
+id = "sink-quarantine"
+wasm = "examples/customs/sink-quarantine.wasm"
+capabilities = ["stdout"]
+env = { QUARANTINE_CONFIG = "${QUARANTINE_URL:-postgres://localhost/quarantine}" }
+
+[[nodes]]
+id = "sink-hold"
+wasm = "examples/customs/sink-hold.wasm"
+capabilities = ["stdout"]
+
+# --- the DAG. screener output is a verdict; routing is by case. ---
+[[edges]]
+from = "source"
+to = "decoder"
+
+[[edges]]
+from = "decoder"
+to = "screener"
+
+[[edges]]
+from = "screener"
+to = "enricher"
+when = "cleared"
+
+[[edges]]
+from = "screener"
+to = "sink-quarantine"
+when = "flagged"
+
+[[edges]]
+from = "screener"
+to = "sink-hold"
+when = "indeterminate"
+
+[[edges]]
+from = "enricher"
+to = "sink-sor"
+
+[[edges]]
+from = "enricher"
+to = "sink-kafka"
