@@ -249,7 +249,7 @@ they land.
 - [x] **W5 — Source generalization** (EVM `topic0` + address filter; offline `fixture` source)
 - [x] **W8 — Compose signing/verification** (`liminal compose keygen|sign|verify`, ed25519; cosign as production guidance)
 - [x] **W2 — HTTP origin allow-list** (host-enforced `allow_origins` on `wasi:http/outgoing-handler`; in the canonical signed body)
-- [ ] **W4 — `wasi:keyvalue` with namespace scoping** (in-memory + Redis; needs a Wasmtime 45 bump or a host hand-roll — `wasmtime-wasi-keyvalue` is 45-only)
+- [x] **W4 — key-value with namespace scoping** (host-provided `liminal:kv/store`, hand-rolled on Wasmtime 44; per-node namespace, isolation enforced + tested; `node_kv!` SDK macro; screener caches verdicts). *Migrating to the standard `wasi:keyvalue` + Redis remains a deliberate Wasmtime-45 bump.*
 
 ### Customs application & harness
 
@@ -265,7 +265,7 @@ they land.
 | M | Workstreams | Status | Outcome |
 |---|---|---|---|
 | **M0** | W1 + W1+ | ✅ | Manifest schema + loader + content addressing + `compose hash` |
-| **M1** | W2 + W4 | ◐ | HTTP origin allow-lists ✅; key-value with namespace scoping (W4) pending |
+| **M1** | W2 + W4 | ✅ | HTTP origin allow-lists + namespaced key-value (standard `wasi:keyvalue`/Redis on the 45 bump) |
 | **M2** | W3 | ✅ | Variant-output routing + `when` edges (**the centerpiece**) |
 | **M3** | W5 | ✅ | Generalized EVM source + offline fixture source |
 | **M4** | W6 | ✅ | The seven Customs components + manifest + attestation test |

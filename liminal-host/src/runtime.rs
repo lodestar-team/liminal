@@ -78,9 +78,13 @@ impl Runtime {
                 .with_context(|| format!("edge references unknown node {id:?}"))
         };
 
+        // One shared key-value backing store for the whole pipeline; each node's
+        // scope namespaces its view of it (W4).
+        let kv_store = crate::kv_host::new_store();
+
         let mut nodes = Vec::with_capacity(manifest.nodes.len());
         for spec in &manifest.nodes {
-            let (store, instance) = instantiate_node(engine, spec)
+            let (store, instance) = instantiate_node(engine, spec, &kv_store)
                 .await
                 .with_context(|| format!("loading node {:?}", spec.id))?;
             nodes.push(Node {
@@ -233,6 +237,7 @@ impl Runtime {
 async fn instantiate_node(
     engine: &Engine,
     spec: &NodeSpec,
+    kv_store: &crate::kv_host::SharedStore,
 ) -> Result<(Store<HostState>, LiminalNode)> {
     let caps = spec.parsed_capabilities()?;
     let grants_http = caps.contains(&Capability::Http);
@@ -243,6 +248,15 @@ async fn instantiate_node(
     if grants_http {
         wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)?;
     }
+
+    // W4: grant the namespaced key-value store iff a namespace is declared.
+    let kv = match &spec.keyvalue {
+        Some(namespace) => {
+            crate::kv_host::add_to_linker(&mut linker)?;
+            Some(crate::kv_host::KvScope::new(namespace.clone(), kv_store.clone()))
+        }
+        None => None,
+    };
 
     // W2: scope HTTP egress to the declared origins. An allow-list without the
     // http grant is meaningless, so warn the operator rather than silently
@@ -269,7 +283,7 @@ async fn instantiate_node(
     let component = Component::from_file(engine, &spec.wasm)
         .map_err(anyhow::Error::from)
         .with_context(|| format!("reading wasm {:?}", spec.wasm))?;
-    let mut store = Store::new(engine, make_state(builder.build(), http_policy));
+    let mut store = Store::new(engine, make_state(builder.build(), http_policy, kv));
 
     let instance = LiminalNode::instantiate_async(&mut store, &component, &linker)
         .await
@@ -305,6 +319,7 @@ mod tests {
             sha256: None,
             capabilities: caps.iter().map(|s| s.to_string()).collect(),
             allow_origins: vec![],
+            keyvalue: None,
             env: BTreeMap::new(),
         }
     }
@@ -320,11 +335,12 @@ mod tests {
             return;
         }
         let engine = test_engine();
+        let kv = crate::kv_host::new_store();
 
-        let denied = instantiate_node(&engine, &enricher_spec(&[])).await;
+        let denied = instantiate_node(&engine, &enricher_spec(&[]), &kv).await;
         assert!(denied.is_err(), "enricher must NOT instantiate without the http grant");
 
-        let granted = instantiate_node(&engine, &enricher_spec(&["http"])).await;
+        let granted = instantiate_node(&engine, &enricher_spec(&["http"]), &kv).await;
         assert!(granted.is_ok(), "enricher must instantiate with the http grant");
     }
 }

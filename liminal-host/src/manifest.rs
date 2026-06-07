@@ -69,6 +69,10 @@ pub struct NodeSpec {
     /// `https://coins.llama.fi`.
     #[serde(default)]
     pub allow_origins: Vec<String>,
+    /// Key-value namespace (W4). Presence grants the `liminal:kv/store` import,
+    /// scoped to this namespace; absence means no key-value access at all.
+    #[serde(default)]
+    pub keyvalue: Option<String>,
     /// Per-node environment variables. Values support `${ENV_VAR}`.
     #[serde(default)]
     pub env: BTreeMap<String, String>,

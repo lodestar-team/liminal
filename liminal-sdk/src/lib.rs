@@ -103,3 +103,57 @@ macro_rules! node {
         export!(__LiminalNode);
     };
 }
+
+/// Like [`node!`], but the component also imports the host key-value store (W4).
+///
+/// Inside the closure, call `kv::get/set/delete/exists` to use the store; the
+/// host scopes every key to the namespace granted to this node in the manifest.
+/// A component built with this macro MUST be granted a `keyvalue` namespace, or
+/// it won't instantiate.
+///
+/// ```rust,ignore
+/// use liminal_sdk::node_kv;
+/// node_kv!(|t: Transfer| -> Result<Vec<Verdict>, String> {
+///     if let Some(cached) = kv::get("some-key") { /* ... */ }
+///     kv::set("some-key", b"value");
+///     Ok(vec![/* ... */])
+/// });
+/// ```
+#[macro_export]
+macro_rules! node_kv {
+    ($func:expr) => {
+        wit_bindgen::generate!({
+            inline: "
+                package liminal:node@0.2.0;
+                interface node {
+                    transform: func(input: list<u8>) -> result<list<list<u8>>, string>;
+                }
+                interface store {
+                    get: func(key: string) -> option<list<u8>>;
+                    set: func(key: string, value: list<u8>);
+                    delete: func(key: string);
+                    exists: func(key: string) -> bool;
+                }
+                world liminal-node-kv {
+                    export node;
+                    import store;
+                }
+            ",
+        });
+
+        /// Namespaced key-value access, scoped by the host to this node.
+        mod kv {
+            pub use super::liminal::node::store::{delete, exists, get, set};
+        }
+
+        struct __LiminalNode;
+
+        impl exports::liminal::node::node::Guest for __LiminalNode {
+            fn transform(input: Vec<u8>) -> Result<Vec<Vec<u8>>, String> {
+                $crate::run_node(input, $func)
+            }
+        }
+
+        export!(__LiminalNode);
+    };
+}

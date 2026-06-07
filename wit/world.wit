@@ -25,3 +25,35 @@ interface node {
 world liminal-node {
     export node;
 }
+
+// ---------------------------------------------------------------------------
+// Namespaced key-value store (W4).
+//
+// A minimal store mirroring `wasi:keyvalue/store`, pared to what Liminal needs
+// so it runs on the Wasmtime 44 base (the official `wasmtime-wasi-keyvalue`
+// crate is Wasmtime-45-only). The host scopes every key by the granting node's
+// declared namespace, so no component can read or write another's keys —
+// isolation enforced by the host, invisible to the guest.
+// ---------------------------------------------------------------------------
+
+interface store {
+    /// Fetch a value, or `none` if the key is absent.
+    get: func(key: string) -> option<list<u8>>;
+    /// Store a value under a key, overwriting any existing value.
+    set: func(key: string, value: list<u8>);
+    /// Remove a key. A no-op if it wasn't present.
+    delete: func(key: string);
+    /// Whether a value exists for the key.
+    exists: func(key: string) -> bool;
+}
+
+/// The world the host implements to provide the store to granted components.
+world kv-provider {
+    import store;
+}
+
+/// A component that both processes messages and uses the key-value store.
+world liminal-node-kv {
+    export node;
+    import store;
+}

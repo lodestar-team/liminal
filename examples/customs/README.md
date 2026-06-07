@@ -51,8 +51,9 @@ not written.
 
 Swap the `[source]` block from `fixture` to `evm` (RPC + Transfer topic + token addresses) — no
 code change. The screener's compiled-in list becomes an origin-scoped `wasi:http` call to a real
-provider (tracked as **W2** in the root README roadmap); durable hold + verdict caching land with
-`wasi:keyvalue` (**W4**); signed, content-addressed composition with **W1/W8**.
+provider (origin allow-lists are enforced today — **W2**); the verdict cache already runs on the
+namespaced key-value store (**W4**), with durable, cross-restart hold arriving when it's backed by
+Redis (**W7**); the composition is already content-addressed and signed (**W1+/W8**).
 
 ## Signed composition (W1+ / W8)
 
@@ -70,12 +71,22 @@ just verify-customs          # checks the committed signature + content addresse
 Rebuilding the components changes their content addresses, so re-sign after a rebuild:
 `liminal compose sign examples/customs/customs.pipeline.toml --key examples/customs/customs.key`.
 
+## Verdict cache (W4)
+
+The screener memoises each address's classification in the host key-value store, namespace
+`verdicts`, keyed by `(list_version, address)` — so the screening "call" runs once per address per
+list version, and a list update busts the cache automatically (the key changes). The namespace is
+isolated by the host: no other component can read or write it. The screener is built with the
+`node_kv!` SDK macro and granted `keyvalue = "verdicts"` in the manifest — without that grant it
+won't instantiate.
+
 ## Status against the RFC
 
 Shipped: conditional `when` routing (**W3**), fixture + address-filtered EVM source (**W5**), the
 seven components and manifest (**W6**), content addressing + `compose hash|sign|verify` (**W1+/W8**),
-the attestation + drop-path tests.
+HTTP origin allow-lists (**W2**), namespaced key-value with the verdict cache (**W4**), and the
+attestation + drop-path tests.
 
-Pending (see root README roadmap): HTTP origin allow-lists (**W2**), `wasi:keyvalue` namespacing
-(**W4** — needs a Wasmtime 45 bump), and the full infra harness — `screening-server`,
-`docker-compose`, Redis-backed durable hold (**W7**).
+Pending (see root README roadmap): the full infra harness — `screening-server`, `docker-compose`,
+Redis-backed durable hold, and the fail-closed + cache-bust integration tests (**W7**); plus the
+deliberate Wasmtime-45 bump to the standard `wasi:keyvalue` interface.

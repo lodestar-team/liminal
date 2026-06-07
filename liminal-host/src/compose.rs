@@ -41,6 +41,8 @@ struct CanonicalComponent {
     capabilities: Vec<String>,
     /// HTTP origin allow-list — a capability boundary, so part of the attestation.
     allow_origins: Vec<String>,
+    /// Key-value namespace grant — also a capability boundary.
+    keyvalue: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -78,6 +80,7 @@ fn canonicalize(manifest: &Manifest) -> Result<Canonical> {
                 .with_context(|| format!("hashing component {:?}", node.id))?,
             capabilities,
             allow_origins,
+            keyvalue: node.keyvalue.clone(),
         });
     }
     components.sort_by(|a, b| a.id.cmp(&b.id));
@@ -264,6 +267,7 @@ mod tests {
                 sha256: None,
                 capabilities: vec!["stdout".into()],
                 allow_origins: vec![],
+                keyvalue: None,
                 env: BTreeMap::new(),
             }],
             edges: vec![Edge { from: "source".into(), to: "n".into(), when: None }],

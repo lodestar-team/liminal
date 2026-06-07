@@ -34,7 +34,8 @@ wasm = "examples/customs/decoder.wasm"
 [[nodes]]
 id = "screener"
 wasm = "examples/customs/screener.wasm"
-# zero capabilities this milestone (compiled-in list); W2 adds origin-scoped http
+keyvalue = "verdicts" # W4: namespaced verdict cache; no other node can read it
+# (compiled-in list this milestone; W2 origin-scoped http for a live provider)
 
 [[nodes]]
 id = "enricher"

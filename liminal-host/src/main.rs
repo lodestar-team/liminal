@@ -19,12 +19,14 @@ use wasmtime_wasi_http::{
 mod compose;
 mod dashboard;
 mod http_policy;
+mod kv_host;
 mod manifest;
 mod node_bindings;
 mod runtime;
 mod source;
 
 use http_policy::OriginPolicy;
+use kv_host::KvScope;
 
 use manifest::Manifest;
 use runtime::Runtime;
@@ -39,6 +41,8 @@ pub struct HostState {
     table: ResourceTable,
     /// Per-node HTTP egress policy (W2). Installed as a `wasi:http` hook.
     http_policy: OriginPolicy,
+    /// Per-node namespaced key-value scope (W4), if granted.
+    kv: Option<KvScope>,
 }
 
 impl WasiView for HostState {
@@ -53,8 +57,14 @@ impl WasiHttpView for HostState {
     }
 }
 
-pub fn make_state(ctx: WasiCtx, http_policy: OriginPolicy) -> HostState {
-    HostState { wasi: ctx, http: WasiHttpCtx::new(), table: ResourceTable::new(), http_policy }
+pub fn make_state(ctx: WasiCtx, http_policy: OriginPolicy, kv: Option<KvScope>) -> HostState {
+    HostState {
+        wasi: ctx,
+        http: WasiHttpCtx::new(),
+        table: ResourceTable::new(),
+        http_policy,
+        kv,
+    }
 }
 
 // ---------------------------------------------------------------------------
