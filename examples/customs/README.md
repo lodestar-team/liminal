@@ -47,6 +47,24 @@ The flagged transfers (`0xaa02` to, `0xbb02` from the OFAC-SDN address) appear *
 quarantine — never in `SOR`/`KAFKA`. The unresolvable counterparty (`0xcc01` → `0x…dead`) is held,
 not written.
 
+## Live demo (origin-scoped HTTP screening + fail-closed)
+
+The offline run uses a compiled-in list. The **live** pipeline points the screener at a real local
+provider it reaches over origin-scoped `wasi:http`:
+
+```bash
+just run-customs-live          # starts screening-server on :8088, runs customs.live.pipeline.toml
+```
+
+- `screener-http` is granted `http` + `allow_origins = ["http://localhost:8088"]` (W2) and
+  `keyvalue = "verdicts"` (W4). It can reach the screening origin and nowhere else.
+- **Fail-closed (W7):** stop the server and re-run — every transfer is held, nothing is written.
+  A gate that fails open is no gate. This is asserted in CI
+  (`unreachable_provider_holds_everything`).
+
+`docker-compose.yml` brings up Postgres/Kafka/Redis for wiring the sinks to real services and giving
+the hold store durable, Redis-backed persistence (the remaining W7 upgrade).
+
 ## Going live
 
 Swap the `[source]` block from `fixture` to `evm` (RPC + Transfer topic + token addresses) — no

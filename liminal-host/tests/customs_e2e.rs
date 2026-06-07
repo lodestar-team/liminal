@@ -61,3 +61,34 @@ fn flagged_transfers_never_reach_the_writer() {
     // just dropping everything).
     assert!(sor_and_kafka.iter().any(|l| l.contains("0xaa01")), "cleared 0xaa01 must reach SoR");
 }
+
+/// W7 — fail-closed: with the screening provider unreachable, the live screener
+/// can't clear anyone, so EVERY transfer is held and NONE is written. A gate
+/// that fails open is no gate. (Assumes nothing is listening on :8088 during
+/// the test — the screener's HTTP call then refuses → indeterminate.)
+#[test]
+fn unreachable_provider_holds_everything() {
+    let manifest = format!("{REPO}/examples/customs/customs.live.pipeline.toml");
+    let screener = format!("{REPO}/examples/customs/screener-http.wasm");
+    if !Path::new(&manifest).exists() || !Path::new(&screener).exists() {
+        eprintln!("skipping: build the customs components first (`just build`)");
+        return;
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_liminal"))
+        .args(["run", "examples/customs/customs.live.pipeline.toml"])
+        .current_dir(REPO)
+        .output()
+        .expect("run liminal");
+    assert!(output.status.success(), "pipeline errored: {}", String::from_utf8_lossy(&output.stderr));
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let written = stdout
+        .lines()
+        .filter(|l| l.starts_with("SOR ") || l.starts_with("KAFKA "))
+        .count();
+    let held = stdout.lines().filter(|l| l.starts_with("HOLD ")).count();
+
+    assert_eq!(written, 0, "fail-closed: nothing may be written when screening is unavailable");
+    assert!(held >= 1, "fail-closed: unscreened transfers must be held, got {held}");
+}

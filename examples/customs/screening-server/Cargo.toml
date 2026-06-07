@@ -1,0 +1,17 @@
+[package]
+name = "customs-screening-server"
+version = "0.2.0"
+edition = "2021"
+
+# A tiny local stand-in for a commercial sanctions-screening provider, so the
+# Customs demo runs without a paid API. Native binary (not a wasm component).
+[[bin]]
+name = "screening-server"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+axum = { version = "0.8", features = ["tokio"] }

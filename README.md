@@ -258,7 +258,9 @@ they land.
 - [x] **W6 — Attestation test** — parses the manifest; asserts `sink-sor` has no `http` capability and every path to it originates at `screener … when = "cleared"`. *Failing this is a compliance regression.*
 - [x] **W7 — Offline run** — `fixtures/transfers.jsonl` + `just run-customs`, fully offline (no RPC/services)
 - [x] **W7 — Drop-path integration test** — flagged → quarantine, **absent** from SoR/Kafka; indeterminate → hold (`tests/customs_e2e.rs`)
-- [ ] **W7 — Full harness** — `screening-server`, `docker-compose.yml` (pg/kafka/redis), fail-closed + cache-bust integration tests
+- [x] **W7 — Live harness** — `screening-server` (axum) + `screener-http` calling it over origin-scoped `wasi:http`; `just run-customs-live`; `docker-compose.yml` for pg/kafka/redis
+- [x] **W7 — Fail-closed integration test** — provider unreachable ⇒ every transfer held, nothing written (`unreachable_provider_holds_everything`)
+- [ ] **W7 — Residual** — Redis-backed *durable* hold (cross-restart) + a cross-run cache-bust test; both want the deliberate Wasmtime-45 / `wasi:keyvalue` + Redis bump
 
 ### Milestones
 
@@ -269,7 +271,7 @@ they land.
 | **M2** | W3 | ✅ | Variant-output routing + `when` edges (**the centerpiece**) |
 | **M3** | W5 | ✅ | Generalized EVM source + offline fixture source |
 | **M4** | W6 | ✅ | The seven Customs components + manifest + attestation test |
-| **M5** | W7 | ◐ | **Money shot runs offline** + drop-path test; full infra harness pending |
+| **M5** | W7 | ✅ | Offline + live (`screening-server`) harness; drop-path + fail-closed tests (Redis durable hold = residual) |
 | **M6** | W8 | ◐ | `compose keygen/sign/verify` shipped; audit-artifact doc + CI verify pending |
 
 ### General platform backlog (not Customs-specific)

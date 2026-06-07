@@ -22,7 +22,7 @@ build-components:
         -p arb-decoder -p arb-enricher -p arb-sink-json \
         -p uni-v3-decoder -p uni-v3-price-enricher \
         -p uni-v3-sink-postgres -p uni-v3-sink-kafka \
-        -p customs-decoder -p customs-screener -p customs-enricher \
+        -p customs-decoder -p customs-screener -p customs-screener-http -p customs-enricher \
         -p customs-sink-sor -p customs-sink-kafka \
         -p customs-sink-quarantine -p customs-sink-hold
     # Stage cross-dex-arb artifacts
@@ -42,6 +42,7 @@ build-components:
     cp target/wasm32-wasip2/release/customs_sink_kafka.wasm      examples/customs/sink-kafka.wasm
     cp target/wasm32-wasip2/release/customs_sink_quarantine.wasm examples/customs/sink-quarantine.wasm
     cp target/wasm32-wasip2/release/customs_sink_hold.wasm       examples/customs/sink-hold.wasm
+    cp target/wasm32-wasip2/release/customs_screener_http.wasm   examples/customs/screener-http.wasm
 
 test:
     cargo test -p liminal-host
@@ -56,6 +57,11 @@ run-uni *ARGS:
 # Customs compliance demo — runs fully offline from fixtures (no RPC/services).
 run-customs *ARGS:
     cargo run --release -p liminal-host -- run examples/customs/customs.pipeline.toml {{ARGS}}
+
+# Customs LIVE demo — starts the local screening-server, screener calls it over
+# origin-scoped wasi:http (fails closed if it's down).
+run-customs-live:
+    ./examples/customs/run.sh
 
 # Verify the Customs composition signature + content addresses (W8).
 verify-customs:
