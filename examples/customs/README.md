@@ -5,7 +5,7 @@ list **before any event reaches the system-of-record**, and proves the one thing
 Subgraph + Substreams + sidecar stack can express: **architectural non-ingestion under capability
 isolation**.
 
-Full spec: [RFC-LIM-001](./RFC.md). **Live in your browser:** [web-nbgn.vercel.app](https://web-nbgn.vercel.app)
+Full spec: [RFC-LIM-001](./RFC.md). **Live in your browser:** [liminal-customs.vercel.app](https://liminal-customs.vercel.app)
 — the real compiled components run client-side via [jco](https://github.com/bytecodealliance/jco)
 (see [`../../web/`](../../web/)).
 
@@ -102,11 +102,11 @@ won't instantiate.
 
 ## Status against the RFC
 
-Shipped: conditional `when` routing (**W3**), fixture + address-filtered EVM source (**W5**), the
-seven components and manifest (**W6**), content addressing + `compose hash|sign|verify` (**W1+/W8**),
-HTTP origin allow-lists (**W2**), namespaced key-value with the verdict cache (**W4**), and the
-attestation + drop-path tests.
+Shipped (all eight workstreams): conditional `when` routing (**W3**), fixture + address-filtered
+EVM source (**W5**), the seven components and manifest (**W6**), content addressing +
+`compose hash|sign|verify` (**W1+/W8**), HTTP origin allow-lists (**W2**), namespaced key-value with
+the verdict cache (**W4**), and the live harness — `screening-server`, `screener-http`,
+`docker-compose.yml`, `run.sh` — with attestation, drop-path, and fail-closed tests (**W7**).
 
-Pending (see root README roadmap): the full infra harness — `screening-server`, `docker-compose`,
-Redis-backed durable hold, and the fail-closed + cache-bust integration tests (**W7**); plus the
-deliberate Wasmtime-45 bump to the standard `wasi:keyvalue` interface.
+Residual (behind a deliberate Wasmtime-45 bump): Redis-backed *durable* hold (cross-restart) and a
+cross-run cache-bust test; migration to the standard `wasi:keyvalue` interface.

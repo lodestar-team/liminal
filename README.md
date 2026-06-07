@@ -4,7 +4,7 @@
 
 **Polyglot, capability-isolated WASIp2 component runtime for streaming indexing pipelines on The Graph.**
 
-> 🌐 **Live browser demo:** [**web-nbgn.vercel.app**](https://web-nbgn.vercel.app) — the actual
+> 🌐 **Live browser demo:** [**liminal-customs.vercel.app**](https://liminal-customs.vercel.app) — the actual
 > compiled Customs WASIp2 components (decoder → screener → enricher) run **in your browser** via
 > [jco](https://github.com/bytecodealliance/jco), producing the same routing as the native host.
 > Watch flagged transfers get barred from the writer; toggle a screening outage to see fail-closed.

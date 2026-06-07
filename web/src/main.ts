@@ -5,9 +5,9 @@ import fixturesRaw from "./transfers.jsonl?raw";
 
 const REPO = "https://github.com/lodestar-team/liminal";
 const SANCTIONED = "0x722122df12d4e14e13ac3b6895a86e84145b6967";
-// The signed offline composition hash (liminal compose hash).
+// The signed offline composition hash (liminal compose hash), v1.0.0.
 const COMPOSITION_HASH =
-  "bbf6175b7d854c13729ec96e905ea11eb0f3f80d22e7a7e42537e54eb7c5cfc5";
+  "86a9f18c3cad42ff1d400306e788ed8c065c47496a59d4b9dd4fbc9eb33a4a19";
 
 const logs = fixturesRaw
   .split("\n")
@@ -105,7 +105,22 @@ app.innerHTML = `
 `;
 
 const failBox = document.querySelector<HTMLInputElement>("#failclosed")!;
-document.querySelector("#run")!.addEventListener("click", () => render(failBox.checked));
-failBox.addEventListener("change", () => render(failBox.checked));
+const runBtn = document.querySelector<HTMLButtonElement>("#run")!;
 
-render(false);
+// Visibly clear → "running…" → results on every Run, so the button obviously
+// does something even when the routing is unchanged.
+function execute() {
+  const sumEl = document.querySelector("#summary")!;
+  const rowsEl = document.querySelector("#rows")!;
+  rowsEl.innerHTML = "";
+  sumEl.innerHTML = `<span class="muted">running components…</span>`;
+  runBtn.disabled = true;
+  setTimeout(() => {
+    render(failBox.checked);
+    runBtn.disabled = false;
+  }, 180);
+}
+
+runBtn.addEventListener("click", execute);
+failBox.addEventListener("change", execute);
+execute();

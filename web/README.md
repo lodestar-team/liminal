@@ -1,7 +1,7 @@
 # Customs — in-browser demo
 
 The actual compiled Customs WASIp2 components running **in the browser**, producing the same
-routing as the native `liminal` host. Live: [web-nbgn.vercel.app](https://web-nbgn.vercel.app)
+routing as the native `liminal` host. Live: [liminal-customs.vercel.app](https://liminal-customs.vercel.app)
 
 ## How it works
 
