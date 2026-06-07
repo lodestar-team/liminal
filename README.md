@@ -130,22 +130,37 @@ node!(|log: EvmLog| -> Result<Vec<NormalizedSwap>, String> {
 liminal/
 ├── liminal-host/           # Generic manifest-driven runtime (the `liminal` binary)
 │   ├── manifest.rs         #   TOML manifest: parse, ${env} interpolation, DAG validation
-│   ├── runtime.rs          #   load nodes (capability-scoped), wire DAG, stream messages
-│   ├── source.rs           #   EVM WebSocket log source → canonical EvmLog
+│   ├── runtime.rs          #   load nodes (capability-scoped), wire DAG, conditional routing
+│   ├── source.rs           #   EVM WebSocket log source + offline fixture source → bytes
+│   ├── http_policy.rs      #   W2: per-node HTTP origin allow-list (wasi:http hook)
+│   ├── kv_host.rs          #   W4: namespaced liminal:kv/store provider
+│   ├── compose.rs          #   W1+/W8: content addressing + ed25519 sign/verify
+│   ├── node_bindings.rs    #   host bindgen for the universal node interface
 │   └── dashboard.rs        #   optional SSE dashboard fed by terminal-node output
-├── liminal-sdk/            # `node!` macro + shared EvmLog wire type for component authors
-├── wit/world.wit           # The one universal node interface
-├── justfile                # build / test / run recipes
+├── liminal-sdk/            # `node!` / `node_kv!` macros + shared EvmLog wire type
+├── wit/world.wit           # The universal node interface + the kv store interface
+├── justfile                # build / test / run / verify recipes
+├── .github/workflows/ci.yml # build + test + `compose verify` on every push
 └── examples/
     ├── uni-v3-swaps/        # decoder → enricher → Postgres + Kafka fan-out
     │   ├── types/           #   shared serde wire types for this pipeline
     │   ├── {decoder,price-enricher,sink-postgres,sink-kafka}/
     │   └── pipeline.toml
-    └── cross-dex-arb/       # Uni v3 + Balancer v2 → live arb dashboard
+    ├── cross-dex-arb/       # Uni v3 + Balancer v2 → live arb dashboard
+    │   ├── types/
+    │   ├── {decoder,enricher,sink-json}/
+    │   ├── dashboard/index.html
+    │   └── pipeline.toml
+    └── customs/             # ★ compliance-gated transfer indexer (RFC-LIM-001)
+        ├── RFC.md  AUDIT.md  README.md
         ├── types/
-        ├── {decoder,enricher,sink-json}/
-        ├── dashboard/index.html
-        └── pipeline.toml
+        ├── {decoder,screener,screener-http,enricher}/
+        ├── {sink-sor,sink-kafka,sink-quarantine,sink-hold}/
+        ├── screening-server/        #   local sanctions provider (axum)
+        ├── fixtures/                #   transfers.jsonl + sanctioned.json
+        ├── customs.pipeline.toml    #   offline · + .sig + customs.pub (signed)
+        ├── customs.live.pipeline.toml
+        ├── docker-compose.yml  run.sh
 ```
 
 ---
@@ -160,17 +175,29 @@ cargo build --release -p liminal-host
 just build
 ```
 
-`just build` builds the host and all seven components for `wasm32-wasip2` and copies the `.wasm`
-files next to their manifests. (Plain `cargo build` deliberately skips the component crates —
-they're cdylibs with WIT exports that only link for the wasm target.)
+`just build` builds the host and every component (all three pipelines) for `wasm32-wasip2` and
+copies the `.wasm` files next to their manifests. (Plain `cargo build` deliberately skips the
+component crates — they're cdylibs with WIT exports that only link for the wasm target.)
 
 ---
 
 ## Running
 
-Both pipelines are now just manifests handed to the same generic binary:
+Every pipeline is just a manifest handed to the same generic binary:
 
 ```bash
+# Customs compliance demo — fully offline, no RPC or services needed
+just run-customs
+#   flagged transfers → quarantine only; cleared → SoR + Kafka; unresolvable → hold
+
+# Customs LIVE — starts the local screening-server; screener calls it over
+# origin-scoped wasi:http. Stop the server and re-run to see it fail closed.
+just run-customs-live
+
+# Verify the signed Customs composition (content addresses + topology + caps)
+just verify-customs
+
+# --- the mainnet examples (need a node) ---
 export ETH_RPC_URL=wss://your-node
 
 # Cross-DEX arbitrage tracker → dashboard at http://localhost:8080
@@ -179,10 +206,6 @@ just run-arb
 
 # Uniswap v3 swaps → Postgres + Kafka fan-out (stop after 5 messages)
 just run-uni --limit 5
-#   …or: cargo run --release -p liminal-host -- run examples/uni-v3-swaps/pipeline.toml --limit 5
-
-# Customs compliance demo — fully offline, no RPC/services
-just run-customs
 ```
 
 ### Composition attestation (`compose`)
@@ -210,28 +233,34 @@ fallbacks, and the PoC sinks emit SQL / JSON to stdout rather than connecting to
 
 ## Status
 
-A **generic, manifest-driven runtime** with two pipelines expressed entirely as config, both
-running against live Ethereum mainnet.
+A **generic, manifest-driven, capability-isolated runtime** with three pipelines expressed
+entirely as config — including **Customs**, a compliance-grade indexer (RFC-LIM-001, complete).
 
 - **One interface** (`transform: bytes -> [bytes]`) for every component.
-- **Pipelines are data** — `pipeline.toml`, not host code.
-- **Capabilities are data** — granted per node, enforced at load time (with a test to prove it).
-- **`node!` SDK macro** — components are typed closures, zero bindgen boilerplate.
-- `cargo build` is clean; `cargo test` covers manifest validation and capability enforcement.
+- **Pipelines are data** — `pipeline.toml`, not host code; conditional `when` routing on a verdict.
+- **Capabilities are data** — granted per node and enforced: load-time grant (no import ⇒ no access),
+  HTTP origin allow-lists, and namespaced key-value isolation.
+- **Compositions are signed** — content-addressed (`sha256` per component) + ed25519; `compose verify`
+  runs in CI as a compliance gate.
+- **`node!` / `node_kv!` SDK macros** — components are typed closures, zero bindgen boilerplate.
+- `cargo build` is clean; **13 tests** cover manifest validation, capability enforcement, KV namespace
+  isolation, HTTP origin policy, sign/verify, and the Customs compliance properties (drop-path +
+  fail-closed). Green CI on every push.
 
 Built on Wasmtime 44 (WASIp2 / WASI 0.2.x). WASIp3 (async streams, structured concurrency) is
 tracked upstream; Liminal will migrate once it stabilises in Wasmtime.
 
 ---
 
-## Roadmap — Customs (RFC-LIM-001)
+## Customs (RFC-LIM-001) — ✅ complete
 
-[**Customs**](./examples/customs/RFC.md) is the next example and the first *compliance-grade* one:
-a sanctions-screened ERC-20 transfer indexer that proves the one thing no Subgraph + Substreams +
+[**Customs**](./examples/customs/RFC.md) is the first *compliance-grade* pipeline: a
+sanctions-screened ERC-20 transfer indexer that proves the one thing no Subgraph + Substreams +
 sidecar stack can express — **architectural non-ingestion under capability isolation**. A flagged
 transfer is routed to quarantine and is *structurally* incapable of reaching the system-of-record
 writer, because the writer has no edge from the flagged branch and imports no HTTP. The compliance
-control is the topology, and the topology is signed.
+control is the topology, and the topology is signed. See [`AUDIT.md`](./examples/customs/AUDIT.md)
+for the auditor's two-fact attestation.
 
 ```
 fixtures / evm-logs ─▶ decoder ─▶ screener
@@ -240,8 +269,8 @@ fixtures / evm-logs ─▶ decoder ─▶ screener
                                     └─ indeterminate ─────────────▶ sink-hold   (fail-closed)
 ```
 
-This is a long build, tracked as eight workstreams (W) across seven milestones (M). Tick boxes as
-they land.
+All eight workstreams (W) and seven milestones (M) are shipped; the checklist below is the record,
+with the two deliberately-deferred residuals marked.
 
 ### Platform deltas (reusable — every future effectful pipeline needs these)
 
@@ -285,7 +314,7 @@ they land.
 ---
 
 ## References
-- [RFC-LIM-001 — Customs](./examples/customs/RFC.md)
+- [RFC-LIM-001 — Customs](./examples/customs/RFC.md) · [Customs README](./examples/customs/README.md) · [AUDIT.md](./examples/customs/AUDIT.md)
 - [WASI 0.2 / wasi.dev](https://wasi.dev)
 - [Wasmtime](https://github.com/bytecodealliance/wasmtime)
 - [Component Model spec](https://github.com/WebAssembly/component-model)
