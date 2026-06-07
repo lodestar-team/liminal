@@ -1,5 +1,7 @@
 # Liminal
 
+[![CI](https://github.com/lodestar-team/liminal/actions/workflows/ci.yml/badge.svg)](https://github.com/lodestar-team/liminal/actions/workflows/ci.yml)
+
 **Polyglot, capability-isolated WASIp2 component runtime for streaming indexing pipelines on The Graph.**
 
 Liminal is a third lane alongside Subgraphs and Substreams — not a replacement for either.
@@ -247,7 +249,7 @@ they land.
 - [x] **W1+ — Content addressing** (`sha256` per component; `liminal compose hash` canonical composition hash)
 - [x] **W3 — Conditional routing** (`when = "<case>"` edges; host dispatches on the output `"tag"` discriminant)
 - [x] **W5 — Source generalization** (EVM `topic0` + address filter; offline `fixture` source)
-- [x] **W8 — Compose signing/verification** (`liminal compose keygen|sign|verify`, ed25519; cosign as production guidance)
+- [x] **W8 — Compose signing/verification** (`liminal compose keygen|sign|verify`, ed25519; cosign as production guidance) + [`AUDIT.md`](./examples/customs/AUDIT.md) + CI runs `compose verify` on every push
 - [x] **W2 — HTTP origin allow-list** (host-enforced `allow_origins` on `wasi:http/outgoing-handler`; in the canonical signed body)
 - [x] **W4 — key-value with namespace scoping** (host-provided `liminal:kv/store`, hand-rolled on Wasmtime 44; per-node namespace, isolation enforced + tested; `node_kv!` SDK macro; screener caches verdicts). *Migrating to the standard `wasi:keyvalue` + Redis remains a deliberate Wasmtime-45 bump.*
 
@@ -272,7 +274,7 @@ they land.
 | **M3** | W5 | ✅ | Generalized EVM source + offline fixture source |
 | **M4** | W6 | ✅ | The seven Customs components + manifest + attestation test |
 | **M5** | W7 | ✅ | Offline + live (`screening-server`) harness; drop-path + fail-closed tests (Redis durable hold = residual) |
-| **M6** | W8 | ◐ | `compose keygen/sign/verify` shipped; audit-artifact doc + CI verify pending |
+| **M6** | W8 | ✅ | `compose keygen/sign/verify`, `AUDIT.md` audit-artifact doc, CI gates on `compose verify` |
 
 ### General platform backlog (not Customs-specific)
 

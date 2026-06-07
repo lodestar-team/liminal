@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test-attest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (with wasm32-wasip2)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Compile every component from source for the wasm target. cargo test uses
+      # the committed .wasm binaries, so this is what catches component breakage.
+      # Builds to target/ — it does NOT overwrite the committed examples/*.wasm,
+      # so the attestation below still checks the signed artifacts.
+      - name: Build components (wasm32-wasip2)
+        run: |
+          cargo build --target wasm32-wasip2 --release \
+            -p arb-decoder -p arb-enricher -p arb-sink-json \
+            -p uni-v3-decoder -p uni-v3-price-enricher \
+            -p uni-v3-sink-postgres -p uni-v3-sink-kafka \
+            -p customs-decoder -p customs-screener -p customs-screener-http \
+            -p customs-enricher -p customs-sink-sor -p customs-sink-kafka \
+            -p customs-sink-quarantine -p customs-sink-hold
+
+      - name: Test (host, manifest validation, capability + compliance enforcement)
+        run: cargo test -p liminal-host
+
+      # The compliance gate: verify the signed Customs composition against the
+      # committed component binaries. A drift in topology, capability boundaries,
+      # or component bytes fails the build.
+      - name: Verify Customs attestation
+        run: |
+          cargo run --release -p liminal-host -- compose verify \
+            examples/customs/customs.pipeline.toml \
+            --sig examples/customs/customs.pipeline.toml.sig \
+            --pub examples/customs/customs.pub
