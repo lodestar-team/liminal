@@ -1,6 +1,6 @@
 [package]
 name = "uni-types"
-version = "0.2.0"
+version = "1.0.0"
 edition = "2021"
 
 # Shared wire types for the uni-v3-swaps pipeline.

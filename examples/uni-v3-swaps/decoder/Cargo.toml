@@ -1,6 +1,6 @@
 [package]
 name = "uni-v3-decoder"
-version = "0.2.0"
+version = "1.0.0"
 edition = "2021"
 
 # Compiles to a WASIp2 component. Build with: cargo build --target wasm32-wasip2

@@ -1,6 +1,6 @@
 [package]
 name = "arb-types"
-version = "0.2.0"
+version = "1.0.0"
 edition = "2021"
 
 # Shared message types for the cross-dex-arb pipeline. Both host-bound (none
