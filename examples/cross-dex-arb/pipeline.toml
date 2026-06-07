@@ -23,6 +23,7 @@ wasm = "examples/cross-dex-arb/decoder.wasm"
 id = "enricher"
 wasm = "examples/cross-dex-arb/enricher.wasm"
 capabilities = ["http"] # the ONLY node granted network egress
+allow_origins = ["https://coins.llama.fi"] # W2: and ONLY to this origin
 env = { ORACLE_URL = "https://coins.llama.fi" }
 
 [[nodes]]

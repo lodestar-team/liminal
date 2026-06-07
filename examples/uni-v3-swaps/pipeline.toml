@@ -25,6 +25,7 @@ wasm = "examples/uni-v3-swaps/decoder.wasm"
 id = "enricher"
 wasm = "examples/uni-v3-swaps/price-enricher.wasm"
 capabilities = ["http"]
+allow_origins = ["https://coins.llama.fi"] # W2: egress scoped to the oracle only
 env = { ORACLE_URL = "https://coins.llama.fi" }
 
 [[nodes]]

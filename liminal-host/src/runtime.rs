@@ -244,6 +244,18 @@ async fn instantiate_node(
         wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)?;
     }
 
+    // W2: scope HTTP egress to the declared origins. An allow-list without the
+    // http grant is meaningless, so warn the operator rather than silently
+    // ignoring it.
+    if !spec.allow_origins.is_empty() && !grants_http {
+        warn!(node = %spec.id, "allow_origins set but the http capability isn't granted; ignoring");
+    }
+    let http_policy = if grants_http && !spec.allow_origins.is_empty() {
+        crate::http_policy::OriginPolicy::restricted(&spec.allow_origins)
+    } else {
+        crate::http_policy::OriginPolicy::unrestricted()
+    };
+
     // stderr is always available so components can log; stdout is a grant.
     let mut builder = WasiCtxBuilder::new();
     builder.inherit_stderr();
@@ -257,7 +269,7 @@ async fn instantiate_node(
     let component = Component::from_file(engine, &spec.wasm)
         .map_err(anyhow::Error::from)
         .with_context(|| format!("reading wasm {:?}", spec.wasm))?;
-    let mut store = Store::new(engine, make_state(builder.build()));
+    let mut store = Store::new(engine, make_state(builder.build(), http_policy));
 
     let instance = LiminalNode::instantiate_async(&mut store, &component, &linker)
         .await
@@ -292,6 +304,7 @@ mod tests {
             wasm: "../examples/cross-dex-arb/enricher.wasm".into(),
             sha256: None,
             capabilities: caps.iter().map(|s| s.to_string()).collect(),
+            allow_origins: vec![],
             env: BTreeMap::new(),
         }
     }

@@ -248,7 +248,7 @@ they land.
 - [x] **W3 — Conditional routing** (`when = "<case>"` edges; host dispatches on the output `"tag"` discriminant)
 - [x] **W5 — Source generalization** (EVM `topic0` + address filter; offline `fixture` source)
 - [x] **W8 — Compose signing/verification** (`liminal compose keygen|sign|verify`, ed25519; cosign as production guidance)
-- [ ] **W2 — HTTP origin allow-list** (host-enforced `allow_origins` on `wasi:http/outgoing-handler`)
+- [x] **W2 — HTTP origin allow-list** (host-enforced `allow_origins` on `wasi:http/outgoing-handler`; in the canonical signed body)
 - [ ] **W4 — `wasi:keyvalue` with namespace scoping** (in-memory + Redis; needs a Wasmtime 45 bump or a host hand-roll — `wasmtime-wasi-keyvalue` is 45-only)
 
 ### Customs application & harness
@@ -265,7 +265,7 @@ they land.
 | M | Workstreams | Status | Outcome |
 |---|---|---|---|
 | **M0** | W1 + W1+ | ✅ | Manifest schema + loader + content addressing + `compose hash` |
-| **M1** | W2 + W4 | ☐ | HTTP origin allow-lists; key-value with namespace scoping |
+| **M1** | W2 + W4 | ◐ | HTTP origin allow-lists ✅; key-value with namespace scoping (W4) pending |
 | **M2** | W3 | ✅ | Variant-output routing + `when` edges (**the centerpiece**) |
 | **M3** | W5 | ✅ | Generalized EVM source + offline fixture source |
 | **M4** | W6 | ✅ | The seven Customs components + manifest + attestation test |

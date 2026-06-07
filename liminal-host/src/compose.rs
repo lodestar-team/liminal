@@ -39,6 +39,8 @@ struct CanonicalComponent {
     /// sha256 of the component's wasm bytes (hex) — the content address.
     sha256: String,
     capabilities: Vec<String>,
+    /// HTTP origin allow-list — a capability boundary, so part of the attestation.
+    allow_origins: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -68,11 +70,14 @@ fn canonicalize(manifest: &Manifest) -> Result<Canonical> {
     for node in &manifest.nodes {
         let mut capabilities = node.capabilities.clone();
         capabilities.sort();
+        let mut allow_origins = node.allow_origins.clone();
+        allow_origins.sort();
         components.push(CanonicalComponent {
             id: node.id.clone(),
             sha256: file_sha256(&node.wasm)
                 .with_context(|| format!("hashing component {:?}", node.id))?,
             capabilities,
+            allow_origins,
         });
     }
     components.sort_by(|a, b| a.id.cmp(&b.id));
@@ -258,6 +263,7 @@ mod tests {
                 wasm: A_WASM.into(),
                 sha256: None,
                 capabilities: vec!["stdout".into()],
+                allow_origins: vec![],
                 env: BTreeMap::new(),
             }],
             edges: vec![Edge { from: "source".into(), to: "n".into(), when: None }],

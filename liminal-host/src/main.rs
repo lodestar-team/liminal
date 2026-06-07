@@ -18,10 +18,13 @@ use wasmtime_wasi_http::{
 
 mod compose;
 mod dashboard;
+mod http_policy;
 mod manifest;
 mod node_bindings;
 mod runtime;
 mod source;
+
+use http_policy::OriginPolicy;
 
 use manifest::Manifest;
 use runtime::Runtime;
@@ -34,6 +37,8 @@ pub struct HostState {
     wasi: WasiCtx,
     http: WasiHttpCtx,
     table: ResourceTable,
+    /// Per-node HTTP egress policy (W2). Installed as a `wasi:http` hook.
+    http_policy: OriginPolicy,
 }
 
 impl WasiView for HostState {
@@ -44,12 +49,12 @@ impl WasiView for HostState {
 
 impl WasiHttpView for HostState {
     fn http(&mut self) -> WasiHttpCtxView<'_> {
-        WasiHttpCtxView { ctx: &mut self.http, table: &mut self.table, hooks: Default::default() }
+        WasiHttpCtxView { ctx: &mut self.http, table: &mut self.table, hooks: &mut self.http_policy }
     }
 }
 
-pub fn make_state(ctx: WasiCtx) -> HostState {
-    HostState { wasi: ctx, http: WasiHttpCtx::new(), table: ResourceTable::new() }
+pub fn make_state(ctx: WasiCtx, http_policy: OriginPolicy) -> HostState {
+    HostState { wasi: ctx, http: WasiHttpCtx::new(), table: ResourceTable::new(), http_policy }
 }
 
 // ---------------------------------------------------------------------------

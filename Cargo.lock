@@ -3358,6 +3358,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.2.17",
  "hex",
+ "hyper",
  "liminal-sdk",
  "serde",
  "serde_json",

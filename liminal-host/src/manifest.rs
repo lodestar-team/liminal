@@ -63,6 +63,12 @@ pub struct NodeSpec {
     /// Capabilities granted to this node and this node only. See [`Capability`].
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// HTTP origin allow-list (W2). Only meaningful with the `http` capability.
+    /// Empty = unrestricted; non-empty = the host rejects any egress to an
+    /// origin not in this list. Entries are `scheme://authority`, e.g.
+    /// `https://coins.llama.fi`.
+    #[serde(default)]
+    pub allow_origins: Vec<String>,
     /// Per-node environment variables. Values support `${ENV_VAR}`.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
