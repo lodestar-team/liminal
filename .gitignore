@@ -3,3 +3,8 @@
 # Signing secrets — never commit. Public keys (*.pub) and signatures (*.sig)
 # are the attestation artifacts and ARE committed.
 *.key
+
+# Node / web build artifacts
+node_modules/
+web/dist/
+.vercel/
